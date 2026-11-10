@@ -401,6 +401,7 @@ const RecognitionCtor = ((window as unknown as Record<string, unknown>).SpeechRe
   (window as unknown as Record<string, unknown>).webkitSpeechRecognition) as (new () => Recognition) | undefined;
 
 let recognition: Recognition | null = null;
+let dictatedSomething = false; // reset per sheet opening: a new text field starts without a leading space
 let listening = false;
 
 function renderMic(): void {
@@ -423,7 +424,10 @@ function startDictation(): void {
         const text = res[0].transcript.trim();
         if (!text) continue;
         if (res.isFinal) {
-          send({ t: 'text', s: `${text} ` }); // trailing space so the next phrase continues the sentence
+          // Space goes before the next phrase, never before punctuation ("aplicación ," -> "aplicación,").
+          const glue = dictatedSomething && !/^[,.;:!?)\]}»”…]/.test(text) ? ' ' : '';
+          send({ t: 'text', s: glue + text });
+          dictatedSomething = true;
           el.micCaption.textContent = `✓ ${text}`;
           haptic(15);
         } else {
@@ -471,6 +475,7 @@ function stopDictation(): void {
 }
 
 function openKeyboard(): void {
+  dictatedSomething = false;
   el.kbd.showModal();
   if (!RecognitionCtor) {
     el.mic.hidden = true;
