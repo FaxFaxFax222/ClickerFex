@@ -1,0 +1,26 @@
+/** Phone -> laptop. Keep messages tiny: they flow at up to 60 Hz. */
+export type RemoteMsg =
+  | { t: 'hello'; v: 1 }
+  | { t: 'ping'; id: number }
+  | { t: 'move'; dx: number; dy: number } // touchpad, phone px already scaled
+  | { t: 'click'; b: 'left' | 'right' }
+  | { t: 'scroll'; dy: number }
+  | { t: 'key'; k: 'next' | 'prev' }
+  | { t: 'laser'; on: boolean }
+  | { t: 'lmove'; dx: number; dy: number }; // laser delta, fraction of screen
+
+export type Mode = 'idle' | 'pdf' | 'agent';
+
+/** Laptop -> phone. */
+export type HostMsg =
+  | { t: 'pong'; id: number }
+  | { t: 'state'; mode: Mode; page: number; total: number; aspect: number };
+
+/** Laptop browser -> desktop agent (ws://localhost). */
+export type AgentMsg =
+  | { t: 'move'; dx: number; dy: number }
+  | { t: 'click'; b: 'left' | 'right' }
+  | { t: 'scroll'; dy: number }
+  | { t: 'key'; k: 'next' | 'prev' }
+  | { t: 'laser'; on: boolean }
+  | { t: 'lpos'; x: number; y: number }; // absolute, 0..1

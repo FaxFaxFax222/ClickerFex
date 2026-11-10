@@ -1,0 +1,2 @@
+websockets>=13,<18
+pynput>=1.7

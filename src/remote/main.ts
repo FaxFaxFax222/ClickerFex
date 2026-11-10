@@ -1,0 +1,461 @@
+import './remote.css';
+import Peer, { type DataConnection } from 'peerjs';
+import type { HostMsg, RemoteMsg } from '../shared/protocol';
+import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
+
+const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
+
+const el = {
+  connect: $<HTMLFormElement>('#connect'),
+  codeInput: $<HTMLInputElement>('#code-input'),
+  codeError: $('#code-error'),
+  hostHint: $('#host-hint'),
+  app: $('#app'),
+  status: $('#status'),
+  statusText: $('#status-text'),
+  counter: $('#counter'),
+  pad: $('#pad'),
+  laserBtn: $<HTMLButtonElement>('#laser-btn'),
+  laserLabel: $('#laser-label'),
+  prev: $<HTMLButtonElement>('#prev'),
+  next: $<HTMLButtonElement>('#next'),
+  menu: $<HTMLDialogElement>('#menu'),
+  menuBtn: $('#menu-btn'),
+  menuCode: $('#menu-code'),
+  padSens: $<HTMLInputElement>('#pad-sens'),
+  padOut: $('#pad-out'),
+  laserSens: $<HTMLInputElement>('#laser-sens'),
+  laserOut: $('#laser-out'),
+  laserToggle: $<HTMLInputElement>('#laser-toggle'),
+  disconnect: $('#disconnect'),
+};
+
+const haptic = (ms = 12) => navigator.vibrate?.(ms);
+const capture = (node: Element, id: number) => {
+  try {
+    node.setPointerCapture(id);
+  } catch {
+    /* pointer already gone */
+  }
+};
+
+// ---------------------------------------------------------------- settings
+
+const settings = {
+  pad: Number(store.get('cfx.padSens') ?? 1.4),
+  laser: Number(store.get('cfx.laserSens') ?? 1),
+  laserToggle: store.get('cfx.laserToggle') === '1',
+};
+
+function bindSettings(): void {
+  el.padSens.value = String(settings.pad);
+  el.laserSens.value = String(settings.laser);
+  el.laserToggle.checked = settings.laserToggle;
+  const render = () => {
+    el.padOut.textContent = `${settings.pad.toFixed(1)}×`;
+    el.laserOut.textContent = `${settings.laser.toFixed(1)}×`;
+    el.laserLabel.textContent = laserOn ? 'Láser activo' : settings.laserToggle ? 'Tocá para láser' : 'Mantené para láser';
+  };
+  el.padSens.addEventListener('input', () => {
+    settings.pad = Number(el.padSens.value);
+    store.set('cfx.padSens', el.padSens.value);
+    render();
+  });
+  el.laserSens.addEventListener('input', () => {
+    settings.laser = Number(el.laserSens.value);
+    store.set('cfx.laserSens', el.laserSens.value);
+    render();
+  });
+  el.laserToggle.addEventListener('change', () => {
+    settings.laserToggle = el.laserToggle.checked;
+    store.set('cfx.laserToggle', settings.laserToggle ? '1' : null);
+    if (laserOn) setLaser(false);
+    render();
+  });
+  renderLaserLabel = render;
+  render();
+}
+let renderLaserLabel = () => {};
+
+// ---------------------------------------------------------------- connection
+
+const CODE_KEY = 'cfx.lastCode';
+let code = '';
+let peer: Peer | null = null;
+let conn: DataConnection | null = null;
+let connected = false;
+let lastPong = 0;
+let pingId = 0;
+let redialTimer: number | undefined;
+let aspect = 16 / 9;
+let releaseWake: (() => void) | null = null;
+
+function setStatus(text: string, tone: 'ok' | 'warn' | 'err'): void {
+  el.status.dataset.tone = tone;
+  el.statusText.textContent = text;
+}
+
+function send(msg: RemoteMsg): void {
+  if (connected && conn?.open) conn.send(msg);
+}
+
+function start(newCode: string): void {
+  code = newCode;
+  store.set(CODE_KEY, code);
+  history.replaceState(null, '', `#${code}`);
+  el.connect.hidden = true;
+  el.app.hidden = false;
+  el.menuCode.textContent = `Vinculado a la computadora ${code}`;
+  releaseWake ??= keepAwake();
+  openPeer();
+}
+
+function stop(): void {
+  clearTimeout(redialTimer);
+  connected = false;
+  conn?.close();
+  conn = null;
+  peer?.destroy();
+  peer = null;
+  releaseWake?.();
+  releaseWake = null;
+  store.set(CODE_KEY, null);
+  history.replaceState(null, '', location.pathname);
+  el.app.hidden = true;
+  showConnect('');
+}
+
+function openPeer(): void {
+  peer?.destroy();
+  setStatus('Conectando…', 'warn');
+  const p = new Peer(peerOptions());
+  peer = p;
+  p.on('open', () => dial());
+  p.on('disconnected', () => {
+    if (p === peer && !p.destroyed) window.setTimeout(() => !p.destroyed && p.reconnect(), 1000);
+  });
+  p.on('error', (err) => {
+    if (p !== peer) return;
+    const type = (err as { type?: string }).type;
+    if (type === 'peer-unavailable') {
+      setStatus(`Esperando a la computadora ${code}…`, 'warn');
+      scheduleRedial(2000);
+    } else if (type === 'network' || type === 'server-error' || type === 'socket-error' || type === 'socket-closed') {
+      setStatus('Sin conexión. Reintentando…', 'err');
+      window.setTimeout(() => p === peer && openPeer(), 2500);
+    } else if (type === 'browser-incompatible') {
+      setStatus('Navegador sin WebRTC', 'err');
+    }
+  });
+}
+
+function dial(): void {
+  if (!peer || peer.destroyed || peer.disconnected) return;
+  clearTimeout(redialTimer);
+  conn?.close();
+  const c = peer.connect(peerId(code), { reliable: true, serialization: 'json' });
+  conn = c;
+  c.on('open', () => {
+    if (c !== conn) return;
+    connected = true;
+    lastPong = Date.now();
+    setStatus('Conectado', 'ok');
+    haptic(30);
+    c.send({ t: 'hello', v: 1 } satisfies RemoteMsg);
+  });
+  c.on('data', (data) => {
+    if (c !== conn) return;
+    onHost(data as HostMsg);
+  });
+  const lost = () => {
+    if (c !== conn) return;
+    if (connected) setStatus('Reconectando…', 'warn');
+    connected = false;
+    scheduleRedial(1200);
+  };
+  c.on('close', lost);
+  c.on('error', lost);
+}
+
+function scheduleRedial(ms: number): void {
+  clearTimeout(redialTimer);
+  redialTimer = window.setTimeout(dial, ms);
+}
+
+function onHost(msg: HostMsg): void {
+  switch (msg.t) {
+    case 'pong':
+      lastPong = Date.now();
+      break;
+    case 'state':
+      aspect = msg.aspect || aspect;
+      el.counter.textContent = msg.mode === 'pdf' ? `${msg.page} / ${msg.total}` : msg.mode === 'agent' ? 'Modo sistema' : '';
+      setStatus(msg.mode === 'idle' ? 'Conectado · elegí un modo en la PC' : 'Conectado', 'ok');
+      break;
+  }
+}
+
+// Heartbeat: data channels can stay "open" long after the laptop disappears.
+window.setInterval(() => {
+  if (!connected) return;
+  send({ t: 'ping', id: ++pingId });
+  if (Date.now() - lastPong > 6000) {
+    connected = false;
+    setStatus('Reconectando…', 'warn');
+    dial();
+  }
+}, 2000);
+
+// Android suspends the page with the screen off; reconnect immediately on return.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && code && !connected) {
+    if (!peer || peer.destroyed) openPeer();
+    else if (peer.disconnected) peer.reconnect();
+    else dial();
+  }
+  if (document.visibilityState === 'hidden' && laserOn) setLaser(false);
+});
+
+// ---------------------------------------------------------------- buttons
+
+function bindNav(button: HTMLButtonElement, k: 'next' | 'prev'): void {
+  // pointerdown instead of click: ~100 ms less latency and no double-tap zoom delay.
+  button.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    button.classList.add('pressed');
+    haptic(k === 'next' ? 18 : 12);
+    send({ t: 'key', k });
+  });
+  const up = () => button.classList.remove('pressed');
+  button.addEventListener('pointerup', up);
+  button.addEventListener('pointercancel', up);
+  button.addEventListener('pointerleave', up);
+}
+bindNav(el.next, 'next');
+bindNav(el.prev, 'prev');
+
+// ---------------------------------------------------------------- touchpad
+
+type Touch = { x: number; y: number; t: number };
+const touches = new Map<number, Touch>();
+let gesture = { start: 0, maxFingers: 0, travel: 0 };
+const acc = { mx: 0, my: 0, scroll: 0, lx: 0, ly: 0 };
+
+el.pad.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  capture(el.pad, e.pointerId);
+  if (touches.size === 0) gesture = { start: performance.now(), maxFingers: 0, travel: 0 };
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
+  gesture.maxFingers = Math.max(gesture.maxFingers, touches.size);
+  el.pad.classList.add('active');
+});
+
+el.pad.addEventListener('pointermove', (e) => {
+  const prev = touches.get(e.pointerId);
+  if (!prev) return;
+  const now = performance.now();
+  const dx = e.clientX - prev.x;
+  const dy = e.clientY - prev.y;
+  const dt = Math.max(now - prev.t, 1);
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
+  gesture.travel += Math.hypot(dx, dy);
+
+  if (touches.size === 1) {
+    // Pointer acceleration: slow moves stay precise, fast flicks cross the screen.
+    const speed = Math.hypot(dx, dy) / dt; // px per ms
+    const gain = settings.pad * (1 + Math.min(speed * 1.6, 3));
+    acc.mx += dx * gain;
+    acc.my += dy * gain;
+  } else if (touches.size === 2) {
+    acc.scroll += dy / 2; // each finger reports; average them
+  }
+});
+
+function endTouch(e: PointerEvent): void {
+  if (!touches.delete(e.pointerId)) return;
+  if (touches.size > 0) return;
+  el.pad.classList.remove('active');
+  const duration = performance.now() - gesture.start;
+  if (gesture.travel < 10 && duration < 280) {
+    send({ t: 'click', b: gesture.maxFingers >= 2 ? 'right' : 'left' });
+    haptic(10);
+    el.pad.classList.add('tap');
+    window.setTimeout(() => el.pad.classList.remove('tap'), 120);
+  }
+}
+el.pad.addEventListener('pointerup', endTouch);
+el.pad.addEventListener('pointercancel', endTouch);
+
+// ---------------------------------------------------------------- laser (gyroscope air-mouse)
+
+let laserOn = false;
+let motionBound = false;
+const grav = { x: 0, y: 0, z: 9.81 };
+const rate = { yaw: 0, pitch: 0 };
+let lastMotion = 0;
+let motionSeen = false;
+
+/** Degrees of wrist rotation that sweep the full screen width at sensitivity 1×. */
+const DEGREES_PER_WIDTH = 32;
+
+function onMotion(e: DeviceMotionEvent): void {
+  const g = e.accelerationIncludingGravity;
+  const r = e.rotationRate;
+  if (!g || !r || g.x === null || r.alpha === null) return;
+  motionSeen = true;
+
+  // Low-pass the accelerometer to isolate gravity ("up" in device coordinates).
+  const k = 0.15;
+  grav.x += ((g.x ?? 0) - grav.x) * k;
+  grav.y += ((g.y ?? 0) - grav.y) * k;
+  grav.z += ((g.z ?? 0) - grav.z) * k;
+  const gl = Math.hypot(grav.x, grav.y, grav.z) || 1;
+  const ux = grav.x / gl, uy = grav.y / gl, uz = grav.z / gl;
+
+  // Angular velocity in device frame (deg/s): alpha=z, beta=x, gamma=y.
+  const wx = r.beta ?? 0, wy = r.gamma ?? 0, wz = r.alpha ?? 0;
+
+  // Yaw = rotation about world vertical; works whether the phone is held flat or upright.
+  const yaw = wx * ux + wy * uy + wz * uz;
+  // Pitch = rotation about the horizontal "right" axis: device +x projected onto the horizontal plane.
+  // Stays valid both when pointing with the top edge (phone flat-ish) and with the back (phone upright).
+  const rx = 1 - ux * ux, ry = -ux * uy, rz = -ux * uz;
+  const rl = Math.hypot(rx, ry, rz) || 1;
+  const pitch = (wx * rx + wy * ry + wz * rz) / rl;
+
+  // Smooth + deadzone to kill hand tremor.
+  rate.yaw += (yaw - rate.yaw) * 0.5;
+  rate.pitch += (pitch - rate.pitch) * 0.5;
+
+  const now = performance.now();
+  const dt = Math.min(lastMotion ? (now - lastMotion) / 1000 : 0.016, 0.05);
+  lastMotion = now;
+  if (!laserOn) return;
+
+  const dead = 1.2;
+  const yawD = Math.abs(rate.yaw) < dead ? 0 : rate.yaw;
+  const pitchD = Math.abs(rate.pitch) < dead ? 0 : rate.pitch;
+  const span = DEGREES_PER_WIDTH / settings.laser;
+  acc.lx += (-yawD * dt) / span;
+  acc.ly += ((-pitchD * dt) / span) * aspect;
+}
+
+async function ensureMotion(): Promise<boolean> {
+  if (motionBound) return true;
+  const DME = window.DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> } | undefined;
+  if (!DME) return false;
+  // iOS and newer Chromium expose requestPermission; only an explicit denial is fatal.
+  if (typeof DME.requestPermission === 'function') {
+    try {
+      if ((await DME.requestPermission()) === 'denied') return false;
+    } catch {
+      /* no user activation: fall through, events may still arrive */
+    }
+  }
+  window.addEventListener('devicemotion', onMotion);
+  motionBound = true;
+  return true;
+}
+
+function setLaser(on: boolean): void {
+  if (on === laserOn) return;
+  laserOn = on;
+  acc.lx = acc.ly = 0;
+  lastMotion = 0;
+  el.laserBtn.classList.toggle('on', on);
+  renderLaserLabel();
+  send({ t: 'laser', on });
+  if (on) {
+    haptic(20);
+    window.setTimeout(() => {
+      if (laserOn && !motionSeen) el.laserLabel.textContent = 'El giroscopio no envía datos';
+    }, 1500);
+  }
+}
+
+el.laserBtn.addEventListener('pointerdown', async (e) => {
+  e.preventDefault();
+  capture(el.laserBtn, e.pointerId);
+  const wantOn = settings.laserToggle ? !laserOn : true;
+  if (wantOn && !(await ensureMotion())) {
+    el.laserLabel.textContent = 'Sin giroscopio disponible';
+    return;
+  }
+  setLaser(wantOn);
+});
+const laserUp = () => {
+  if (!settings.laserToggle) setLaser(false);
+};
+el.laserBtn.addEventListener('pointerup', laserUp);
+el.laserBtn.addEventListener('pointercancel', laserUp);
+el.laserBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ---------------------------------------------------------------- send loop (one batch per frame)
+
+function flush(): void {
+  if (connected) {
+    const mx = Math.trunc(acc.mx), my = Math.trunc(acc.my);
+    if (mx || my) {
+      send({ t: 'move', dx: mx, dy: my });
+      acc.mx -= mx;
+      acc.my -= my;
+    }
+    const sc = Math.trunc(acc.scroll);
+    if (sc) {
+      send({ t: 'scroll', dy: sc });
+      acc.scroll -= sc;
+    }
+    if (laserOn && (Math.abs(acc.lx) > 1e-5 || Math.abs(acc.ly) > 1e-5)) {
+      send({ t: 'lmove', dx: +acc.lx.toFixed(5), dy: +acc.ly.toFixed(5) });
+      acc.lx = acc.ly = 0;
+    }
+  } else {
+    acc.mx = acc.my = acc.scroll = acc.lx = acc.ly = 0;
+  }
+  requestAnimationFrame(flush);
+}
+requestAnimationFrame(flush);
+
+// ---------------------------------------------------------------- menu / connect screen
+
+el.menuBtn.addEventListener('click', () => el.menu.showModal());
+el.disconnect.addEventListener('click', () => {
+  el.menu.close();
+  stop();
+});
+
+function showConnect(prefill: string): void {
+  el.connect.hidden = false;
+  el.codeInput.value = prefill;
+  el.hostHint.textContent = location.host;
+  el.codeError.hidden = true;
+  if (!prefill) el.codeInput.focus();
+}
+
+el.codeInput.addEventListener('input', () => {
+  el.codeInput.value = el.codeInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  el.codeError.hidden = true;
+});
+
+el.connect.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const c = normalizeCode(el.codeInput.value);
+  if (!c) {
+    el.codeError.hidden = false;
+    return;
+  }
+  el.codeInput.blur();
+  start(c);
+});
+
+// Block the browser's own gestures (pull-to-refresh, pinch, long-press menus) on the control surface.
+for (const type of ['touchmove', 'gesturestart', 'contextmenu'] as const) {
+  el.app.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+}
+
+// ---------------------------------------------------------------- boot
+
+bindSettings();
+const fromHash = normalizeCode(location.hash.slice(1));
+if (fromHash) start(fromHash);
+else showConnect(normalizeCode(store.get(CODE_KEY) ?? '') ?? '');

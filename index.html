@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b0b0c" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <title>ClickerFex</title>
+  </head>
+  <body class="setup">
+    <main id="setup">
+      <header class="brand">
+        <span class="brand-mark"></span>ClickerFex
+      </header>
+
+      <section class="pair">
+        <div class="qr-card"><canvas id="qr" width="232" height="232" aria-label="Código QR de vinculación"></canvas></div>
+        <div class="pair-info">
+          <p class="eyebrow">Escaneá con la cámara del teléfono</p>
+          <p class="code" id="code" aria-live="polite">· · · · ·</p>
+          <p class="muted">o entrá a <span id="pair-host" class="mono"></span> y escribí el código</p>
+          <p class="status" id="peer-status"><span class="dot"></span><span class="status-text">Conectando…</span></p>
+          <p class="status" id="devices"><span class="dot"></span><span class="status-text">Sin teléfono vinculado</span></p>
+        </div>
+      </section>
+
+      <section class="modes">
+        <label class="mode" id="drop" tabindex="0">
+          <input type="file" accept="application/pdf,.pdf" id="file" hidden />
+          <span class="mode-kicker">Modo navegador · sin instalar nada</span>
+          <span class="mode-title">Presentar un PDF</span>
+          <span class="mode-desc">Exportá tu presentación a PDF y arrastrala acá, o hacé clic para elegirla. Láser y puntero se dibujan sobre las diapositivas.</span>
+        </label>
+        <div class="mode" id="agent-card">
+          <span class="mode-kicker">Modo sistema · requiere agente</span>
+          <span class="mode-title">Controlar PowerPoint, Keynote o Slides</span>
+          <span class="mode-desc">Mouse real, flechas y láser sobre cualquier app. Corré el agente en esta computadora y conectalo.</span>
+          <span class="mode-actions">
+            <button type="button" class="btn" id="agent-btn">Conectar agente</button>
+            <span class="status" id="agent-status"><span class="dot"></span><span class="status-text">Desconectado</span></span>
+          </span>
+        </div>
+      </section>
+    </main>
+
+    <div id="stage" hidden>
+      <canvas id="slide"></canvas>
+    </div>
+
+    <div id="hud" hidden>
+      <span id="hud-page" class="mono">1 / 1</span>
+      <span class="hud-sep"></span>
+      <span id="hud-devices">0</span>
+      <button type="button" class="icon-btn" id="hud-qr" title="Mostrar QR (Q)" aria-label="Mostrar QR">
+        <svg viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2v2h-2zM18 14h2v2h-2z"/></svg>
+      </button>
+      <button type="button" class="icon-btn" id="hud-fs" title="Pantalla completa (F)" aria-label="Pantalla completa">
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <button type="button" class="icon-btn" id="hud-close" title="Cerrar PDF" aria-label="Cerrar PDF">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+    </div>
+
+    <div id="mini-qr" hidden>
+      <canvas id="qr-mini" width="160" height="160"></canvas>
+      <span class="mono" id="code-mini"></span>
+    </div>
+
+    <div id="laser" aria-hidden="true"></div>
+    <svg id="vcursor" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 8-6 1.5L10 19z"/></svg>
+    <div id="toast" role="status" hidden></div>
+
+    <script type="module" src="/src/receiver/main.ts"></script>
+  </body>
+</html>

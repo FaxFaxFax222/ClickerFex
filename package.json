@@ -1,0 +1,22 @@
+{
+  "name": "clickerfex",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pdfjs-dist": "4.10.38",
+    "peerjs": "1.5.5",
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "@types/qrcode": "1.5.5",
+    "typescript": "5.7.3",
+    "vite": "6.3.5"
+  }
+}

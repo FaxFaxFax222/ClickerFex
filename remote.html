@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b0c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>ClickerFex · Control</title>
+  </head>
+  <body>
+    <form id="connect" class="screen" hidden autocomplete="off">
+      <header class="brand"><span class="brand-mark"></span>ClickerFex</header>
+      <div class="connect-body">
+        <label for="code-input" class="label">Código de la computadora</label>
+        <input id="code-input" class="code-input" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="5" placeholder="ABCDE" />
+        <p class="hint">Abrí <strong id="host-hint"></strong> en la computadora y escaneá el QR, o escribí el código de 5 caracteres.</p>
+        <p class="error" id="code-error" hidden>El código tiene 5 caracteres (letras y números).</p>
+      </div>
+      <button type="submit" class="primary">Conectar</button>
+    </form>
+
+    <div id="app" class="screen" hidden>
+      <header class="bar">
+        <span class="status" id="status" data-tone="warn"><span class="dot"></span><span id="status-text">Conectando…</span></span>
+        <span class="counter mono" id="counter"></span>
+        <button type="button" class="icon-btn" id="menu-btn" aria-label="Ajustes">
+          <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        </button>
+      </header>
+
+      <div id="pad" role="application" aria-label="Touchpad">
+        <span class="pad-hint">Deslizá para mover · tocá para clic<br />dos dedos: desplazar · tocar con dos: clic derecho</span>
+      </div>
+
+      <button type="button" id="laser-btn" class="laser-btn">
+        <span class="laser-dot"></span><span id="laser-label">Mantené para láser</span>
+      </button>
+
+      <div class="nav">
+        <button type="button" id="prev" class="nav-btn" aria-label="Anterior">
+          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
+        </button>
+        <button type="button" id="next" class="nav-btn primary" aria-label="Siguiente">
+          <svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
+        </button>
+      </div>
+    </div>
+
+    <dialog id="menu">
+      <form method="dialog" class="sheet">
+        <h2>Ajustes</h2>
+        <label class="field">
+          <span>Velocidad del touchpad <output id="pad-out"></output></span>
+          <input type="range" id="pad-sens" min="0.5" max="3" step="0.1" />
+        </label>
+        <label class="field">
+          <span>Sensibilidad del láser <output id="laser-out"></output></span>
+          <input type="range" id="laser-sens" min="0.4" max="2.5" step="0.1" />
+        </label>
+        <label class="check">
+          <input type="checkbox" id="laser-toggle" />
+          <span>Láser con un toque (encender/apagar) en lugar de mantener</span>
+        </label>
+        <p class="hint" id="menu-code"></p>
+        <div class="sheet-actions">
+          <button type="button" id="disconnect" class="ghost">Cambiar computadora</button>
+          <button type="submit" class="primary">Listo</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/remote/main.ts"></script>
+  </body>
+</html>
