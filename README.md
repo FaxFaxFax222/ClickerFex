@@ -11,7 +11,7 @@ Tu teléfono como clicker de presentaciones: touchpad, avanzar/retroceder y lás
 | Modo | Instalación | Controla | Cuándo |
 |---|---|---|---|
 | **PDF en navegador** | Nada | El PDF dentro de la web | PCs ajenas (universidad, eventos) |
-| **Sistema (agente)** | Python + agente | Mouse y teclado reales: PowerPoint, Keynote, Google Slides, Canva | Tu propia laptop |
+| **Sistema (agente)** | Agente: ejecutable o script Python | Mouse y teclado reales: PowerPoint, Keynote, Google Slides, Canva | Tu propia laptop |
 
 ### Controles en el teléfono
 
