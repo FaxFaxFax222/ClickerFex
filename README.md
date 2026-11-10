@@ -51,7 +51,8 @@ python clickerfex_agent.py
 
 Después, en la web abierta en esa misma computadora: **Conectar agente** (Chrome puede pedir permiso de "acceso a la red local": aceptar). La pestaña de ClickerFex debe quedar abierta (puede estar en segundo plano, o mejor en su propia ventana) mientras presentás.
 
-- Láser en modo sistema = el cursor real. En PowerPoint, `Ctrl+L` durante la presentación lo convierte en puntero láser.
+- Láser en modo sistema: mientras mantenés el botón, el puntero se convierte en un punto rojo visible sobre cualquier app (también PowerPoint/Keynote en pantalla completa); al soltar vuelve el cursor normal. Windows reemplaza el cursor del sistema; macOS dibuja el punto en una capa transparente y oculta el cursor. `--no-dot` lo desactiva.
+- **Escribir y dictar** (botón de micrófono, solo en modo sistema): hacé clic en un campo de texto con el touchpad y dictá con el micrófono del teléfono; cada frase se escribe en la computadora. También hay un campo para escribir con el teclado del teléfono, y teclas Borrar / Tab / Enter. El dictado usa el reconocimiento de voz de Chrome (requiere internet).
 - Seguridad: el agente solo acepta conexiones desde `https://clickerfex.vercel.app` y `localhost`. Si usás otro dominio: `python clickerfex_agent.py --origin "https://tu-dominio\.com"`.
 
 ## Arquitectura

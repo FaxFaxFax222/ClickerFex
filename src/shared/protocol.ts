@@ -5,9 +5,12 @@ export type RemoteMsg =
   | { t: 'move'; dx: number; dy: number } // touchpad, phone px already scaled
   | { t: 'click'; b: 'left' | 'right' }
   | { t: 'scroll'; dy: number }
-  | { t: 'key'; k: 'next' | 'prev' }
+  | { t: 'key'; k: Key }
+  | { t: 'text'; s: string } // typed on the computer (system mode)
   | { t: 'laser'; on: boolean }
   | { t: 'lpos'; x: number; y: number }; // laser, absolute 0..1 (phone maps pointing angle to screen)
+
+export type Key = 'next' | 'prev' | 'enter' | 'backspace' | 'tab';
 
 export type Mode = 'idle' | 'pdf' | 'agent';
 
@@ -21,6 +24,7 @@ export type AgentMsg =
   | { t: 'move'; dx: number; dy: number }
   | { t: 'click'; b: 'left' | 'right' }
   | { t: 'scroll'; dy: number }
-  | { t: 'key'; k: 'next' | 'prev' }
+  | { t: 'key'; k: Key }
+  | { t: 'text'; s: string }
   | { t: 'laser'; on: boolean }
   | { t: 'lpos'; x: number; y: number }; // absolute, 0..1

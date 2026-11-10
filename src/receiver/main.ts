@@ -87,7 +87,9 @@ function startPeer(): void {
       handle(conn, data as RemoteMsg);
     });
     const drop = () => {
-      if (conns.delete(conn)) renderDevices();
+      if (!conns.delete(conn)) return;
+      renderDevices();
+      if (laser.on) handle(conn, { t: 'laser', on: false }); // phone vanished mid-laser: don't leave the dot on
     };
     conn.on('close', drop);
     conn.on('error', drop);
@@ -203,7 +205,10 @@ function handle(conn: DataConnection, msg: RemoteMsg): void {
       break;
     case 'key':
       if (toAgent) agent.send(msg);
-      else navigate(msg.k === 'next' ? 1 : -1);
+      else if (msg.k === 'next' || msg.k === 'prev') navigate(msg.k === 'next' ? 1 : -1);
+      break;
+    case 'text':
+      if (toAgent) agent.send(msg);
       break;
     case 'move':
       if (toAgent) {

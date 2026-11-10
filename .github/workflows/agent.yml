@@ -39,6 +39,9 @@ jobs:
           cat agent.log
           kill $PID 2>/dev/null || true
           grep -q "agente activo" agent.log
+      - name: Self-test (laser dot on a real desktop)
+        shell: bash
+        run: ./dist/ClickerFex-Agent* --selftest
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: Copy-Item dist/ClickerFex-Agent.exe ${{ matrix.asset }}

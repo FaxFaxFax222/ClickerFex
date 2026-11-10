@@ -1,6 +1,6 @@
 import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
-import type { HostMsg, RemoteMsg } from '../shared/protocol';
+import type { HostMsg, Key, RemoteMsg } from '../shared/protocol';
 import { AimTracker, OneEuro, type Aim } from './aim';
 import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
@@ -29,6 +29,14 @@ const el = {
   laserOut: $('#laser-out'),
   laserToggle: $<HTMLInputElement>('#laser-toggle'),
   disconnect: $('#disconnect'),
+  kbdBtn: $<HTMLButtonElement>('#kbd-btn'),
+  kbd: $<HTMLDialogElement>('#kbd'),
+  kbdClose: $('#kbd-close'),
+  kbdText: $<HTMLTextAreaElement>('#kbd-text'),
+  kbdSend: $('#kbd-send'),
+  mic: $<HTMLButtonElement>('#mic'),
+  micLabel: $('#mic-label'),
+  micCaption: $('#mic-caption'),
 };
 
 const haptic = (ms = 12) => navigator.vibrate?.(ms);
@@ -191,6 +199,9 @@ function onHost(msg: HostMsg): void {
     case 'state':
       aspect = msg.aspect || aspect;
       el.counter.textContent = msg.mode === 'pdf' ? `${msg.page} / ${msg.total}` : msg.mode === 'agent' ? 'Modo sistema' : '';
+      // Typing/dictation needs the desktop agent: only offered in system mode.
+      el.kbdBtn.hidden = msg.mode !== 'agent';
+      if (msg.mode !== 'agent' && el.kbd.open) closeKeyboard();
       setStatus(msg.mode === 'idle' ? 'Conectado · elegí un modo en la PC' : 'Conectado', 'ok');
       break;
   }
@@ -216,6 +227,7 @@ document.addEventListener('visibilitychange', () => {
   }
   if (document.visibilityState === 'hidden') {
     if (laserOn) setLaser(false);
+    if (listening) stopDictation();
     tracker.pause();
   }
 });
@@ -372,6 +384,131 @@ function flush(): void {
   requestAnimationFrame(flush);
 }
 requestAnimationFrame(flush);
+
+// ---------------------------------------------------------------- type & dictate (system mode)
+
+type Recognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onresult: ((e: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((e: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start(): void;
+  stop(): void;
+};
+const RecognitionCtor = ((window as unknown as Record<string, unknown>).SpeechRecognition ??
+  (window as unknown as Record<string, unknown>).webkitSpeechRecognition) as (new () => Recognition) | undefined;
+
+let recognition: Recognition | null = null;
+let listening = false;
+
+function renderMic(): void {
+  el.mic.classList.toggle('listening', listening);
+  el.micLabel.textContent = listening ? 'Escuchando… tocá para parar' : 'Tocá para dictar';
+}
+
+function startDictation(): void {
+  if (!RecognitionCtor) return;
+  if (!recognition) {
+    const r = new RecognitionCtor();
+    r.lang = navigator.language?.startsWith('es') ? navigator.language : 'es-AR';
+    // Single-utterance sessions restarted on end: Chrome Android duplicates results in continuous mode.
+    r.continuous = false;
+    r.interimResults = true;
+    r.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const res = e.results[i];
+        const text = res[0].transcript.trim();
+        if (!text) continue;
+        if (res.isFinal) {
+          send({ t: 'text', s: `${text} ` }); // trailing space so the next phrase continues the sentence
+          el.micCaption.textContent = `✓ ${text}`;
+          haptic(15);
+        } else {
+          interim += text;
+        }
+      }
+      if (interim) el.micCaption.textContent = interim;
+    };
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        listening = false;
+        el.micCaption.textContent = 'Permiso de micrófono denegado (ajustes del sitio en Chrome)';
+      } else if (e.error === 'network') {
+        listening = false;
+        el.micCaption.textContent = 'El dictado necesita conexión a internet';
+      }
+      renderMic();
+    };
+    r.onend = () => {
+      if (listening) {
+        try {
+          r.start();
+        } catch {
+          listening = false;
+          renderMic();
+        }
+      }
+    };
+    recognition = r;
+  }
+  listening = true;
+  el.micCaption.textContent = '';
+  try {
+    recognition.start();
+  } catch {
+    /* already running */
+  }
+  renderMic();
+}
+
+function stopDictation(): void {
+  listening = false;
+  recognition?.stop();
+  renderMic();
+}
+
+function openKeyboard(): void {
+  el.kbd.showModal();
+  if (!RecognitionCtor) {
+    el.mic.hidden = true;
+    el.micCaption.textContent = 'Dictado no disponible en este navegador: usá el micrófono del teclado del teléfono.';
+  }
+}
+
+function closeKeyboard(): void {
+  stopDictation();
+  el.kbdText.blur();
+  if (el.kbd.open) el.kbd.close();
+}
+
+function sendTyped(): void {
+  const text = el.kbdText.value;
+  if (!text) return;
+  send({ t: 'text', s: text });
+  el.kbdText.value = '';
+  haptic(15);
+}
+
+el.kbdBtn.addEventListener('click', openKeyboard);
+el.kbdClose.addEventListener('click', closeKeyboard);
+el.kbd.addEventListener('close', stopDictation);
+el.mic.addEventListener('click', () => (listening ? stopDictation() : startDictation()));
+el.kbdSend.addEventListener('click', sendTyped);
+el.kbdText.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendTyped();
+  }
+});
+for (const btn of el.kbd.querySelectorAll<HTMLButtonElement>('[data-key]')) {
+  btn.addEventListener('click', () => {
+    send({ t: 'key', k: btn.dataset.key as Key });
+    haptic(10);
+  });
+}
 
 // ---------------------------------------------------------------- menu / connect screen
 

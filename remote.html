@@ -2,7 +2,7 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#0b0b0c" />
     <meta name="mobile-web-app-capable" content="yes" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
@@ -25,6 +25,9 @@
       <header class="bar">
         <span class="status" id="status" data-tone="warn"><span class="dot"></span><span id="status-text">Conectando…</span></span>
         <span class="counter mono" id="counter"></span>
+        <button type="button" class="icon-btn" id="kbd-btn" aria-label="Escribir en la computadora" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
         <button type="button" class="icon-btn" id="menu-btn" aria-label="Ajustes">
           <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
         </button>
@@ -47,6 +50,35 @@
         </button>
       </div>
     </div>
+
+    <dialog id="kbd">
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>Escribir en la PC</h2>
+          <button type="button" class="icon-btn" id="kbd-close" aria-label="Cerrar">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <p class="hint">Hacé clic en un campo de texto de la computadora con el touchpad y después dictá o escribí.</p>
+        <button type="button" id="mic" class="mic">
+          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span id="mic-label">Tocá para dictar</span>
+        </button>
+        <p class="caption" id="mic-caption" aria-live="polite"></p>
+        <label class="field">
+          <span>O escribí con el teclado del teléfono</span>
+          <textarea id="kbd-text" rows="2" placeholder="Texto…" enterkeyhint="send"></textarea>
+        </label>
+        <div class="keys">
+          <button type="button" class="key" data-key="backspace" aria-label="Borrar">
+            <svg viewBox="0 0 24 24"><path d="M9 5h11v14H9l-6-7zM12 9l5 6M17 9l-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>
+          </button>
+          <button type="button" class="key" data-key="tab">Tab</button>
+          <button type="button" class="key" data-key="enter">Enter</button>
+          <button type="button" class="key primary" id="kbd-send">Enviar</button>
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="menu">
       <form method="dialog" class="sheet">
