@@ -1,0 +1,56 @@
+name: Build desktop agent
+
+on:
+  push:
+    paths: ['agent/**', '.github/workflows/agent.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: ClickerFex-Agent-Windows.exe
+            backend: _win32
+          - os: macos-latest
+            asset: ClickerFex-Agent-macOS.zip
+            backend: _darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: pip install -r agent/requirements.txt pyinstaller==6.11.1
+      - name: Build
+        run: pyinstaller --onefile --name ClickerFex-Agent --hidden-import pynput.keyboard.${{ matrix.backend }} --hidden-import pynput.mouse.${{ matrix.backend }} agent/clickerfex_agent.py
+      - name: Smoke test (frozen binary starts and serves)
+        shell: bash
+        run: |
+          ./dist/ClickerFex-Agent* --port 8799 > agent.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do grep -q "agente activo" agent.log && break; sleep 1; done
+          cat agent.log
+          kill $PID 2>/dev/null || true
+          grep -q "agente activo" agent.log
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: Copy-Item dist/ClickerFex-Agent.exe ${{ matrix.asset }}
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/ClickerFex-Agent ${{ matrix.asset }}
+      - name: Publish to release 'agent-latest'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view agent-latest >/dev/null 2>&1 || \
+            gh release create agent-latest --title "Agente de escritorio" \
+              --notes "Ejecutables del agente ClickerFex. Se actualizan solos en cada cambio de agent/." --target "${{ github.sha }}"
+          gh release upload agent-latest "${{ matrix.asset }}" --clobber

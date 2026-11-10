@@ -17,7 +17,9 @@ Tu teléfono como clicker de presentaciones: touchpad, avanzar/retroceder y lás
 
 - **Touchpad**: deslizar mueve el puntero (con aceleración), tocar = clic, tocar con dos dedos = clic derecho, arrastrar con dos dedos = scroll.
 - **‹ / ›**: diapositiva anterior / siguiente.
-- **Láser**: mantené apretado y apuntá moviendo la muñeca. Arranca siempre en el centro de la pantalla. En ajustes (`⋯`) se puede cambiar a modo toque (encender/apagar) y ajustar sensibilidades.
+- **Láser**: apuntá con la parte de arriba del teléfono (donde está la cámara selfie) hacia el centro de la pantalla y mantené apretado el botón. El punto aparece en el centro y sigue hacia dónde apuntás, como un láser real. Usa orientación absoluta: girar el teléfono sobre su eje largo no lo mueve, y la misma dirección siempre cae en el mismo lugar.
+  - Ajuste clave (`⋯` → *Ancho de la pantalla vista desde vos*): cuántos grados ocupa la pantalla desde donde estás parado. Default 30° (≈3 m de pantalla a 5–6 m). Lejos o pantalla chica: bajalo. Cerca o pantalla gigante: subilo.
+  - También se puede cambiar a modo toque (encender/apagar).
 - La pantalla del teléfono no se apaga mientras está vinculado. Para usarlo como app: menú de Chrome → *Agregar a pantalla principal*.
 
 ### Atajos en la computadora (modo PDF)
@@ -26,7 +28,14 @@ Tu teléfono como clicker de presentaciones: touchpad, avanzar/retroceder y lás
 
 ## Modo sistema: agente de escritorio
 
-Un navegador no puede mover el mouse del sistema ni enviar teclas a otras apps. El agente es un script de ~150 líneas que hace eso, escuchando solo en `localhost:8765`.
+Un navegador no puede mover el mouse del sistema ni enviar teclas a otras apps. El agente es un programa chico que hace eso, escuchando solo en `localhost:8765`. Con el agente, el touchpad del teléfono maneja toda la computadora.
+
+**Ejecutable (sin Python)** — links en la web, o en el release [`agent-latest`](https://github.com/FaxFaxFax222/ClickerFex/releases/tag/agent-latest). GitHub Actions lo recompila en cada cambio de `agent/`.
+
+- Windows: abrir `ClickerFex-Agent-Windows.exe`. Si aparece SmartScreen: *Más información → Ejecutar de todas formas* (no está firmado).
+- macOS (Apple Silicon): descomprimir, clic derecho → *Abrir* la primera vez (no está firmado). Dar permiso de **Accesibilidad** a Terminal en Ajustes → Privacidad y seguridad.
+
+**Con Python**:
 
 ```bash
 cd agent
@@ -40,9 +49,8 @@ pip install -r requirements.txt
 python clickerfex_agent.py
 ```
 
-Después, en la web abierta en esa misma computadora: **Conectar agente** (Chrome puede pedir permiso de "acceso a la red local": aceptar). La pestaña de ClickerFex debe quedar abierta (puede estar en segundo plano) mientras presentás en PowerPoint.
+Después, en la web abierta en esa misma computadora: **Conectar agente** (Chrome puede pedir permiso de "acceso a la red local": aceptar). La pestaña de ClickerFex debe quedar abierta (puede estar en segundo plano, o mejor en su propia ventana) mientras presentás.
 
-- macOS: dar permiso de **Accesibilidad** a la Terminal (Ajustes → Privacidad y seguridad).
 - Láser en modo sistema = el cursor real. En PowerPoint, `Ctrl+L` durante la presentación lo convierte en puntero láser.
 - Seguridad: el agente solo acepta conexiones desde `https://clickerfex.vercel.app` y `localhost`. Si usás otro dominio: `python clickerfex_agent.py --origin "https://tu-dominio\.com"`.
 

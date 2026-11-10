@@ -99,6 +99,11 @@ label.mode.drag { border-style: dashed; border-color: var(--text); }
 .mode-desc { color: var(--muted); }
 .mode-actions { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 8px; }
 
+.downloads { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; font-size: 13px; color: var(--muted); }
+.downloads a { color: var(--text); text-decoration: underline; text-decoration-color: #4a4a52; text-underline-offset: 3px; }
+.downloads a:hover { text-decoration-color: var(--text); }
+.downloads a.primary-os { font-weight: 600; }
+
 .btn {
   appearance: none;
   border: 0;

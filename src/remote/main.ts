@@ -1,6 +1,7 @@
 import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
 import type { HostMsg, RemoteMsg } from '../shared/protocol';
+import { AimTracker, OneEuro, type Aim } from './aim';
 import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -43,17 +44,17 @@ const capture = (node: Element, id: number) => {
 
 const settings = {
   pad: Number(store.get('cfx.padSens') ?? 1.4),
-  laser: Number(store.get('cfx.laserSens') ?? 1),
+  fov: Number(store.get('cfx.laserFov') ?? 30), // degrees the screen spans from the presenter
   laserToggle: store.get('cfx.laserToggle') === '1',
 };
 
 function bindSettings(): void {
   el.padSens.value = String(settings.pad);
-  el.laserSens.value = String(settings.laser);
+  el.laserSens.value = String(settings.fov);
   el.laserToggle.checked = settings.laserToggle;
   const render = () => {
     el.padOut.textContent = `${settings.pad.toFixed(1)}×`;
-    el.laserOut.textContent = `${settings.laser.toFixed(1)}×`;
+    el.laserOut.textContent = `${settings.fov.toFixed(0)}°`;
     el.laserLabel.textContent = laserOn ? 'Láser activo' : settings.laserToggle ? 'Tocá para láser' : 'Mantené para láser';
   };
   el.padSens.addEventListener('input', () => {
@@ -62,8 +63,8 @@ function bindSettings(): void {
     render();
   });
   el.laserSens.addEventListener('input', () => {
-    settings.laser = Number(el.laserSens.value);
-    store.set('cfx.laserSens', el.laserSens.value);
+    settings.fov = Number(el.laserSens.value);
+    store.set('cfx.laserFov', el.laserSens.value);
     render();
   });
   el.laserToggle.addEventListener('change', () => {
@@ -213,7 +214,10 @@ document.addEventListener('visibilitychange', () => {
     else if (peer.disconnected) peer.reconnect();
     else dial();
   }
-  if (document.visibilityState === 'hidden' && laserOn) setLaser(false);
+  if (document.visibilityState === 'hidden') {
+    if (laserOn) setLaser(false);
+    tracker.pause();
+  }
 });
 
 // ---------------------------------------------------------------- buttons
@@ -239,7 +243,7 @@ bindNav(el.prev, 'prev');
 type Touch = { x: number; y: number; t: number };
 const touches = new Map<number, Touch>();
 let gesture = { start: 0, maxFingers: 0, travel: 0 };
-const acc = { mx: 0, my: 0, scroll: 0, lx: 0, ly: 0 };
+const acc = { mx: 0, my: 0, scroll: 0 };
 
 el.pad.addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -286,89 +290,42 @@ function endTouch(e: PointerEvent): void {
 el.pad.addEventListener('pointerup', endTouch);
 el.pad.addEventListener('pointercancel', endTouch);
 
-// ---------------------------------------------------------------- laser (gyroscope air-mouse)
+// ---------------------------------------------------------------- laser (absolute pointing)
 
 let laserOn = false;
-let motionBound = false;
-const grav = { x: 0, y: 0, z: 9.81 };
-const rate = { yaw: 0, pitch: 0 };
-let lastMotion = 0;
-let motionSeen = false;
+let center: Aim | null = null; // direction the phone pointed when the laser was pressed = screen centre
+const fx = new OneEuro();
+const fy = new OneEuro();
+let pending: { x: number; y: number } | null = null;
 
-/** Degrees of wrist rotation that sweep the full screen width at sensitivity 1×. */
-const DEGREES_PER_WIDTH = 32;
+const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
-function onMotion(e: DeviceMotionEvent): void {
-  const g = e.accelerationIncludingGravity;
-  const r = e.rotationRate;
-  if (!g || !r || g.x === null || r.alpha === null) return;
-  motionSeen = true;
-
-  // Low-pass the accelerometer to isolate gravity ("up" in device coordinates).
-  const k = 0.15;
-  grav.x += ((g.x ?? 0) - grav.x) * k;
-  grav.y += ((g.y ?? 0) - grav.y) * k;
-  grav.z += ((g.z ?? 0) - grav.z) * k;
-  const gl = Math.hypot(grav.x, grav.y, grav.z) || 1;
-  const ux = grav.x / gl, uy = grav.y / gl, uz = grav.z / gl;
-
-  // Angular velocity in device frame (deg/s): alpha=z, beta=x, gamma=y.
-  const wx = r.beta ?? 0, wy = r.gamma ?? 0, wz = r.alpha ?? 0;
-
-  // Yaw = rotation about world vertical; works whether the phone is held flat or upright.
-  const yaw = wx * ux + wy * uy + wz * uz;
-  // Pitch = rotation about the horizontal "right" axis: device +x projected onto the horizontal plane.
-  // Stays valid both when pointing with the top edge (phone flat-ish) and with the back (phone upright).
-  const rx = 1 - ux * ux, ry = -ux * uy, rz = -ux * uz;
-  const rl = Math.hypot(rx, ry, rz) || 1;
-  const pitch = (wx * rx + wy * ry + wz * rz) / rl;
-
-  // Smooth + deadzone to kill hand tremor.
-  rate.yaw += (yaw - rate.yaw) * 0.5;
-  rate.pitch += (pitch - rate.pitch) * 0.5;
-
-  const now = performance.now();
-  const dt = Math.min(lastMotion ? (now - lastMotion) / 1000 : 0.016, 0.05);
-  lastMotion = now;
+const tracker = new AimTracker((aim) => {
   if (!laserOn) return;
-
-  const dead = 1.2;
-  const yawD = Math.abs(rate.yaw) < dead ? 0 : rate.yaw;
-  const pitchD = Math.abs(rate.pitch) < dead ? 0 : rate.pitch;
-  const span = DEGREES_PER_WIDTH / settings.laser;
-  acc.lx += (-yawD * dt) / span;
-  acc.ly += ((-pitchD * dt) / span) * aspect;
-}
-
-async function ensureMotion(): Promise<boolean> {
-  if (motionBound) return true;
-  const DME = window.DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> } | undefined;
-  if (!DME) return false;
-  // iOS and newer Chromium expose requestPermission; only an explicit denial is fatal.
-  if (typeof DME.requestPermission === 'function') {
-    try {
-      if ((await DME.requestPermission()) === 'denied') return false;
-    } catch {
-      /* no user activation: fall through, events may still arrive */
-    }
-  }
-  window.addEventListener('devicemotion', onMotion);
-  motionBound = true;
-  return true;
-}
+  if (!center) center = aim;
+  // Angle-to-screen mapping: the screen spans `fov` degrees horizontally from where you stand.
+  const fovH = (settings.fov * Math.PI) / 180;
+  const fovV = fovH / aspect;
+  const now = performance.now();
+  const x = fx.filter(0.5 - wrapPi(aim.yaw - center.yaw) / fovH, now);
+  const y = fy.filter(0.5 - (aim.pitch - center.pitch) / fovV, now);
+  pending = { x: Math.min(Math.max(x, 0), 1), y: Math.min(Math.max(y, 0), 1) };
+});
 
 function setLaser(on: boolean): void {
   if (on === laserOn) return;
   laserOn = on;
-  acc.lx = acc.ly = 0;
-  lastMotion = 0;
+  center = null;
+  pending = null;
+  fx.reset();
+  fy.reset();
   el.laserBtn.classList.toggle('on', on);
   renderLaserLabel();
   send({ t: 'laser', on });
   if (on) {
     haptic(20);
     window.setTimeout(() => {
-      if (laserOn && !motionSeen) el.laserLabel.textContent = 'El giroscopio no envía datos';
+      if (laserOn && !tracker.hasData) el.laserLabel.textContent = 'El sensor de orientación no envía datos';
     }, 1500);
   }
 }
@@ -377,8 +334,8 @@ el.laserBtn.addEventListener('pointerdown', async (e) => {
   e.preventDefault();
   capture(el.laserBtn, e.pointerId);
   const wantOn = settings.laserToggle ? !laserOn : true;
-  if (wantOn && !(await ensureMotion())) {
-    el.laserLabel.textContent = 'Sin giroscopio disponible';
+  if (wantOn && !(await tracker.start())) {
+    el.laserLabel.textContent = 'Sin sensor de orientación';
     return;
   }
   setLaser(wantOn);
@@ -405,12 +362,12 @@ function flush(): void {
       send({ t: 'scroll', dy: sc });
       acc.scroll -= sc;
     }
-    if (laserOn && (Math.abs(acc.lx) > 1e-5 || Math.abs(acc.ly) > 1e-5)) {
-      send({ t: 'lmove', dx: +acc.lx.toFixed(5), dy: +acc.ly.toFixed(5) });
-      acc.lx = acc.ly = 0;
+    if (laserOn && pending) {
+      send({ t: 'lpos', x: +pending.x.toFixed(4), y: +pending.y.toFixed(4) });
+      pending = null;
     }
   } else {
-    acc.mx = acc.my = acc.scroll = acc.lx = acc.ly = 0;
+    acc.mx = acc.my = acc.scroll = 0;
   }
   requestAnimationFrame(flush);
 }

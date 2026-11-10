@@ -25,8 +25,8 @@ try:
     from pynput.mouse import Button, Controller as Mouse
     from websockets.asyncio.server import ServerConnection, serve
     from websockets.http11 import Request, Response
-except ImportError:
-    sys.exit("Faltan dependencias. Ejecutá:  pip install -r requirements.txt")
+except ImportError as e:
+    sys.exit(f"Faltan dependencias ({e}). Ejecutá:  pip install -r requirements.txt")
 
 # Exact production domain only: any "clickerfex-*.vercel.app" could be registered by someone else.
 DEFAULT_ORIGINS = [
@@ -48,6 +48,14 @@ def screen_size() -> tuple[int, int]:
             pass
         u = ctypes.windll.user32
         return u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+    if platform.system() == "Darwin":
+        try:
+            from Quartz import CGDisplayBounds, CGMainDisplayID  # ships with pynput on macOS
+
+            b = CGDisplayBounds(CGMainDisplayID())
+            return int(b.size.width), int(b.size.height)
+        except Exception:
+            pass
     try:
         import tkinter
 
@@ -91,6 +99,7 @@ class Injector:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(line_buffering=True)  # status lines show up immediately, also when frozen
     ap = argparse.ArgumentParser(description="ClickerFex desktop agent")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument(
@@ -140,6 +149,10 @@ def main() -> None:
         asyncio.run(run())
     except KeyboardInterrupt:
         pass
+    except OSError as e:
+        print(f"No se pudo abrir el puerto {args.port}: {e}. ¿Ya hay otro agente abierto?")
+        if getattr(sys, "frozen", False):
+            input("Enter para cerrar")
 
 
 if __name__ == "__main__":

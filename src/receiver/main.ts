@@ -179,8 +179,8 @@ function frame(): void {
   el.cursor.style.transform = `translate3d(${pointer.x}px, ${pointer.y}px, 0)`;
   if (laser.on) {
     // Light smoothing removes sensor jitter without perceptible lag at 60 fps.
-    laser.rx += (laser.x - laser.rx) * 0.45;
-    laser.ry += (laser.y - laser.ry) * 0.45;
+    laser.rx += (laser.x - laser.rx) * 0.55;
+    laser.ry += (laser.y - laser.ry) * 0.55;
     el.laser.style.transform = `translate3d(${laser.rx * window.innerWidth}px, ${laser.ry * window.innerHeight}px, 0)`;
   }
   requestAnimationFrame(frame);
@@ -234,9 +234,9 @@ function handle(conn: DataConnection, msg: RemoteMsg): void {
         el.laser.classList.toggle('on', msg.on);
       }
       break;
-    case 'lmove':
-      laser.x = clamp01(laser.x + msg.dx);
-      laser.y = clamp01(laser.y + msg.dy);
+    case 'lpos':
+      laser.x = clamp01(msg.x);
+      laser.y = clamp01(msg.y);
       if (toAgent) agent.send({ t: 'lpos', x: laser.x, y: laser.y });
       break;
   }
@@ -427,6 +427,14 @@ el.agentBtn.addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------- boot
+
+// Highlight the download that matches this computer.
+const ua = navigator.userAgent;
+const osLink = /Windows/.test(ua) ? '#dl-win' : /Mac OS X|Macintosh/.test(ua) ? '#dl-mac' : null;
+if (osLink) $(osLink).classList.add('primary-os');
+
+// Holding a Web Lock keeps Chrome from freezing this tab while it sits behind PowerPoint or another tab.
+navigator.locks?.request('clickerfex-keepalive', () => new Promise<void>(() => {})).catch(() => {});
 
 void showCode();
 startPeer();

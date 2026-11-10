@@ -7,7 +7,7 @@ export type RemoteMsg =
   | { t: 'scroll'; dy: number }
   | { t: 'key'; k: 'next' | 'prev' }
   | { t: 'laser'; on: boolean }
-  | { t: 'lmove'; dx: number; dy: number }; // laser delta, fraction of screen
+  | { t: 'lpos'; x: number; y: number }; // laser, absolute 0..1 (phone maps pointing angle to screen)
 
 export type Mode = 'idle' | 'pdf' | 'agent';
 
