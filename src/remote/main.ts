@@ -126,6 +126,20 @@ let pingId = 0;
 let redialTimer: number | undefined;
 let aspect = 16 / 9;
 let releaseWake: (() => void) | null = null;
+let admitted = false; // the computer accepted this phone on the current link
+let denied = false;
+
+// This phone's secret. A computer that approved it once recognises it and stops asking.
+const DEVICE_KEY = 'cfx.deviceId';
+const deviceId =
+  store.get(DEVICE_KEY) ??
+  (() => {
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+    store.set(DEVICE_KEY, id);
+    return id;
+  })();
+const ua = navigator.userAgent;
+const deviceName = /iPhone/.test(ua) ? 'Un iPhone' : /iPad/.test(ua) ? 'Un iPad' : /Android/.test(ua) ? 'Un teléfono Android' : 'Un dispositivo';
 let hostMode: Mode = 'idle';
 let hostTour = false; // the desktop agent is recent enough to hold keys
 
@@ -140,6 +154,7 @@ function send(msg: RemoteMsg): void {
 
 function start(newCode: string): void {
   code = newCode;
+  denied = false;
   store.set(CODE_KEY, code);
   history.replaceState(null, '', `#${code}`);
   el.connect.hidden = true;
@@ -197,10 +212,10 @@ function dial(): void {
   c.on('open', () => {
     if (c !== conn) return;
     connected = true;
+    admitted = false;
     lastPong = Date.now();
-    setStatus('Conectado', 'ok');
-    haptic(30);
-    c.send({ t: 'hello', v: 1 } satisfies RemoteMsg);
+    setStatus('Vinculando…', 'warn');
+    c.send({ t: 'hello', v: 2, id: deviceId, name: deviceName } satisfies RemoteMsg);
   });
   c.on('data', (data) => {
     if (c !== conn) return;
@@ -208,8 +223,9 @@ function dial(): void {
   });
   const lost = () => {
     if (c !== conn) return;
-    if (connected) setStatus('Reconectando…', 'warn');
     connected = false;
+    if (denied) return;
+    setStatus('Reconectando…', 'warn');
     scheduleRedial(1200);
   };
   c.on('close', lost);
@@ -226,7 +242,30 @@ function onHost(msg: HostMsg): void {
     case 'pong':
       lastPong = Date.now();
       break;
+    case 'auth':
+      if (msg.state === 'pending') {
+        setStatus('Aceptá este teléfono en la computadora', 'warn');
+      } else {
+        // Don't keep knocking: the person at the computer said no.
+        denied = true;
+        clearTimeout(redialTimer);
+        setStatus('La computadora rechazó este teléfono', 'err');
+      }
+      break;
+    case 'code': {
+      const next = normalizeCode(String(msg.code));
+      if (!admitted || !next) break;
+      code = next;
+      store.set(CODE_KEY, code);
+      history.replaceState(null, '', `#${code}`);
+      el.menuCode.textContent = `Vinculado a la computadora ${code}`;
+      break; // the computer now drops this link; the redial uses the new code
+    }
     case 'state':
+      if (!admitted) {
+        admitted = true;
+        haptic(30);
+      }
       aspect = msg.aspect || aspect;
       hostMode = msg.mode;
       hostTour = msg.tour === true;
@@ -244,7 +283,7 @@ function onHost(msg: HostMsg): void {
 window.setInterval(() => {
   if (!connected) return;
   send({ t: 'ping', id: ++pingId });
-  if (Date.now() - lastPong > 6000) {
+  if (Date.now() - lastPong > 6000 && !denied) {
     connected = false;
     setStatus('Reconectando…', 'warn');
     dial();
@@ -253,7 +292,7 @@ window.setInterval(() => {
 
 // Android suspends the page with the screen off; reconnect immediately on return.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && code && !connected) {
+  if (document.visibilityState === 'visible' && code && !connected && !denied) {
     if (!peer || peer.destroyed) openPeer();
     else if (peer.disconnected) peer.reconnect();
     else dial();

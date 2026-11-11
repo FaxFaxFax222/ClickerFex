@@ -81,6 +81,21 @@ body.present #setup { display: none; }
 [data-tone='err'] .dot { background: var(--err); }
 [data-tone='ok'] .status-text { color: var(--text); }
 
+.pair-actions { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 4px 0 0; }
+.link {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  text-decoration: underline;
+  text-decoration-color: #4a4a52;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.link:hover, .link:focus-visible { color: var(--text); outline: none; }
+
 .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .mode {
   display: flex;
@@ -239,6 +254,27 @@ body.hud-on #hud { opacity: 1; transform: none; pointer-events: auto; }
   z-index: 30;
 }
 #toast[hidden] { display: none; }
+
+#approve {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  width: min(360px, calc(100vw - 32px));
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid #44444c;
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.6);
+  cursor: auto;
+  z-index: 40;
+}
+#approve[hidden] { display: none; }
+#approve p { margin: 0; }
+#approve .muted { font-size: 13px; }
+.approve-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+.btn.ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--border); }
 
 @media (prefers-reduced-motion: reduce) {
   #hud, #laser, #vcursor, label.mode { transition: none; }

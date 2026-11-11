@@ -77,6 +77,13 @@ La cámara de Matterport solo entiende tecla apretada o suelta, así que la velo
 
 El láser apunta dentro del monitor donde está el cursor en el momento de encenderlo. Para cambiar de pantalla: llevá el cursor a esa pantalla con el touchpad y volvé a encender el láser.
 
+## Seguridad de la vinculación
+
+- **Aprobación**: la primera vez que un teléfono se conecta, la computadora muestra un aviso (*Permitir / Rechazar*). Hasta que se acepta, no se obedece ningún comando suyo. Los teléfonos aceptados se recuerdan en ese navegador y no vuelven a preguntar.
+- **Código por sesión**: el código dura mientras la pestaña esté abierta (recargar lo conserva). Al cerrar la pestaña o el navegador se genera uno nuevo.
+- **Cambiar código**: lo reemplaza al instante; los teléfonos aceptados que estén conectados pasan solos al nuevo.
+- **Olvidar teléfonos autorizados**: borra la lista y cambia el código; todos vuelven a pedir permiso.
+
 ## Arquitectura
 
 ```

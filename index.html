@@ -21,6 +21,10 @@
           <p class="muted">o entrá a <span id="pair-host" class="mono"></span> y escribí el código</p>
           <p class="status" id="peer-status"><span class="dot"></span><span class="status-text">Conectando…</span></p>
           <p class="status" id="devices"><span class="dot"></span><span class="status-text">Sin teléfono vinculado</span></p>
+          <p class="pair-actions">
+            <button type="button" class="link" id="rotate">Cambiar código</button>
+            <button type="button" class="link" id="forget" hidden>Olvidar teléfonos autorizados</button>
+          </p>
         </div>
       </section>
 
@@ -76,6 +80,15 @@
     <div id="laser" aria-hidden="true"></div>
     <svg id="vcursor" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 8-6 1.5L10 19z"/></svg>
     <div id="toast" role="status" hidden></div>
+
+    <div id="approve" role="alertdialog" aria-labelledby="approve-title" hidden>
+      <p id="approve-title"><strong id="approve-name"></strong> quiere controlar esta computadora</p>
+      <p class="muted">Aceptá solo si es tu teléfono. No se vuelve a preguntar por este teléfono.</p>
+      <div class="approve-actions">
+        <button type="button" class="btn ghost" id="approve-no">Rechazar</button>
+        <button type="button" class="btn" id="approve-yes">Permitir</button>
+      </div>
+    </div>
 
     <script type="module" src="/src/receiver/main.ts"></script>
   </body>
