@@ -36,6 +36,8 @@ const el = {
   kbdSend: $('#kbd-send'),
   menuClose: $('#menu-close'),
   tourSwap: $<HTMLInputElement>('#tour-swap'),
+  lookSpeed: $<HTMLInputElement>('#look-speed'),
+  lookOut: $('#look-out'),
   modeClicker: $<HTMLButtonElement>('#mode-clicker'),
   modeTour: $<HTMLButtonElement>('#mode-tour'),
   clicker: $('#clicker'),
@@ -65,6 +67,7 @@ const settings = {
   fov: Number(store.get('cfx.laserFov') ?? 30), // degrees the screen spans from the presenter
   laserToggle: store.get('cfx.laserToggle') === '1',
   tourSwap: store.get('cfx.tourSwap') === '1',
+  look: Number(store.get('cfx.lookSpeed') ?? 0.5), // share of Matterport's full turning speed
 };
 
 function bindSettings(): void {
@@ -74,6 +77,7 @@ function bindSettings(): void {
   const render = () => {
     el.padOut.textContent = `${settings.pad.toFixed(1)}×`;
     el.laserOut.textContent = `${settings.fov.toFixed(0)}°`;
+    el.lookOut.textContent = `${Math.round(settings.look * 100)}%`;
     el.laserLabel.textContent = laserOn ? 'Láser activo' : settings.laserToggle ? 'Tocá para láser' : 'Mantené para láser';
   };
   el.padSens.addEventListener('input', () => {
@@ -90,6 +94,12 @@ function bindSettings(): void {
     settings.laserToggle = el.laserToggle.checked;
     store.set('cfx.laserToggle', settings.laserToggle ? '1' : null);
     if (laserOn) setLaser(false);
+    render();
+  });
+  el.lookSpeed.value = String(settings.look);
+  el.lookSpeed.addEventListener('input', () => {
+    settings.look = Number(el.lookSpeed.value);
+    store.set('cfx.lookSpeed', el.lookSpeed.value);
     render();
   });
   el.tourSwap.checked = settings.tourSwap;
@@ -604,16 +614,37 @@ el.kbd.addEventListener('close', () => stopKeyRepeat());
 type Dir = 'up' | 'down' | 'left' | 'right';
 const DIRS: readonly Dir[] = ['up', 'down', 'left', 'right'];
 
-/** A thumb surface that holds up to two keys on the computer, by direction (8-way). */
+// In an upright viewport the tour surface is drawn rotated 90deg clockwise (see remote.css).
+const uprightViewport = window.matchMedia('(orientation: portrait)');
+
+/** Finger position relative to the node's centre, in the node's own (unrotated) axes. */
+function localOffset(e: PointerEvent, node: HTMLElement): { x: number; y: number } {
+  const r = node.getBoundingClientRect();
+  const sx = e.clientX - (r.left + r.width / 2);
+  const sy = e.clientY - (r.top + r.height / 2);
+  return uprightViewport.matches ? { x: sy, y: -sx } : { x: sx, y: sy };
+}
+
+const PULSE_ON_MS = 45;
+const HOLD_REFRESH_MS = 120;
+
+/**
+ * A thumb surface that holds up to two keys on the computer, by direction (8-way).
+ * Keys only know on/off, so speed below 100% is made by pulsing them: `speed` is the share of time they are down.
+ */
 class DirControl {
   readonly held = new Set<HoldKey>();
   private pointer: number | null = null;
+  private deflection = 0; // 0 at the dead zone's edge, 1 at the rim
+  private timer: number | undefined;
+  private offTimer: number | undefined;
   private readonly knob: HTMLElement | null;
 
   constructor(
     private readonly node: HTMLElement,
     private readonly keys: Record<Dir, HoldKey>,
     private readonly deadzone: number,
+    private readonly speed: (deflection: number) => number = () => 1,
   ) {
     this.knob = node.querySelector<HTMLElement>('.knob');
     node.addEventListener('pointerdown', (e) => {
@@ -636,16 +667,17 @@ class DirControl {
   }
 
   private track(e: PointerEvent): void {
-    const r = this.node.getBoundingClientRect();
-    const radius = r.width / 2;
-    let x = (e.clientX - r.left - radius) / radius;
-    let y = (e.clientY - r.top - r.height / 2) / radius;
+    const radius = this.node.offsetWidth / 2;
+    const p = localOffset(e, this.node);
+    let x = p.x / radius;
+    let y = p.y / radius;
     const mag = Math.hypot(x, y);
     if (mag > 1) {
       x /= mag;
       y /= mag;
     }
     if (this.knob) this.knob.style.transform = `translate(${x * radius * 0.56}px, ${y * radius * 0.56}px)`;
+    this.deflection = Math.min(Math.max((mag - this.deadzone) / (1 - this.deadzone), 0), 1);
     const want = new Set<Dir>();
     if (mag > this.deadzone) {
       // 8-way: an axis counts when it carries more than sin(22.5deg) of the deflection.
@@ -670,42 +702,66 @@ class DirControl {
         pressed = true;
       } else {
         this.held.delete(key);
+        send({ t: 'hold', k: key, on: false });
       }
-      send({ t: 'hold', k: key, on });
     }
-    if (pressed) haptic(8);
+    if (pressed) {
+      haptic(8);
+      this.beat(); // new direction takes effect now, not at the next pulse
+    }
   }
+
+  /** One pulse: keys down, then (below full speed) up again after PULSE_ON_MS. Re-arms itself while keys are held.
+   *  At full speed it doubles as the refresh the agent needs to keep a key down. */
+  private beat = (): void => {
+    clearTimeout(this.timer);
+    clearTimeout(this.offTimer);
+    this.timer = undefined;
+    if (!this.held.size) return;
+    const keys = [...this.held];
+    for (const k of keys) send({ t: 'hold', k, on: true });
+    const duty = this.speed(this.deflection);
+    if (duty >= 0.95) {
+      this.timer = window.setTimeout(this.beat, HOLD_REFRESH_MS);
+      return;
+    }
+    this.offTimer = window.setTimeout(() => {
+      for (const k of keys) send({ t: 'hold', k, on: false });
+    }, PULSE_ON_MS);
+    this.timer = window.setTimeout(this.beat, PULSE_ON_MS / Math.max(duty, 0.05));
+  };
 
   release(): void {
     this.pointer = null;
+    this.deflection = 0;
     this.node.classList.remove('active');
     if (this.knob) this.knob.style.transform = '';
-    this.apply(new Set());
+    clearTimeout(this.timer);
+    clearTimeout(this.offTimer);
+    this.timer = undefined;
+    for (const k of this.held) send({ t: 'hold', k, on: false });
+    this.held.clear();
+    for (const d of DIRS) this.node.classList.remove(`d-${d}`);
   }
 }
 
 // Matterport: WASD walks, IJKL turns the camera.
 const tourControls = [
   new DirControl(el.walk, { up: 'w', down: 's', left: 'a', right: 'd' }, 0.2),
-  new DirControl(el.look, { up: 'i', down: 'k', left: 'j', right: 'l' }, 0.3),
+  // Camera: the rim gives the speed chosen in settings, the inner ring down to 35% of it.
+  new DirControl(el.look, { up: 'i', down: 'k', left: 'j', right: 'l' }, 0.3, (d) => settings.look * (0.35 + 0.65 * d)),
 ];
 
-// Held keys are re-sent: the agent turns that into key repeat and lets go by itself if the phone goes silent.
-window.setInterval(() => {
-  for (const c of tourControls) for (const k of c.held) send({ t: 'hold', k, on: true });
-}, 120);
-
 // Zoom lever: springs back to the centre; deflection = mouse-wheel speed.
-let zoomRate = 0; // -1..1, up = zoom in
+let zoomRate = 0; // -1..1, right = zoom in
 let zoomPointer: number | null = null;
 const leverKnob = el.zoom.querySelector<HTMLElement>('.lever-knob')!;
 
 function trackZoom(e: PointerEvent): void {
-  const r = el.zoom.getBoundingClientRect();
-  const travel = (r.height - leverKnob.offsetHeight) / 2 - 6;
-  const offset = Math.min(Math.max(e.clientY - r.top - r.height / 2, -travel), travel);
-  leverKnob.style.transform = `translateY(${offset}px)`;
-  const v = -offset / travel;
+  const travel = (el.zoom.offsetWidth - leverKnob.offsetWidth) / 2 - 6;
+  const offset = Math.min(Math.max(localOffset(e, el.zoom).x, -travel), travel);
+  leverKnob.style.transform = `translateX(${offset}px)`;
+  const v = offset / travel;
   zoomRate = Math.abs(v) < 0.15 ? 0 : v;
 }
 function endZoom(): void {

@@ -60,10 +60,10 @@
         <p class="notice" id="tour-notice" hidden></p>
 
         <div class="zoom">
-          <span class="zoom-sign">+</span>
-          <div id="zoom" class="lever" role="slider" aria-label="Zoom" aria-orientation="vertical"><span class="lever-knob"></span></div>
-          <span class="zoom-sign">−</span>
           <span class="ctl-label">Zoom</span>
+          <span class="zoom-sign">−</span>
+          <div id="zoom" class="lever" role="slider" aria-label="Zoom" aria-orientation="horizontal"><span class="lever-knob"></span></div>
+          <span class="zoom-sign">+</span>
         </div>
 
         <div class="ctl ctl-look">
@@ -160,6 +160,11 @@
 
         <section class="group">
           <h3>Recorrido</h3>
+          <label class="field">
+            <span>Velocidad de la cámara <output id="look-out"></output></span>
+            <input type="range" id="look-speed" min="0.15" max="1" step="0.05" />
+            <small class="hint">Empujar el joystick hasta el borde gira a esta velocidad; cerca del centro, más lento.</small>
+          </label>
           <label class="check">
             <span>Cámara a la derecha, movimiento a la izquierda</span>
             <input type="checkbox" id="tour-swap" />
