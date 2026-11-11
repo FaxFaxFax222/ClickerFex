@@ -1,6 +1,6 @@
 /** Phone -> laptop. Keep messages tiny: they flow at up to 60 Hz. */
 export type RemoteMsg =
-  | { t: 'hello'; v: 1 }
+  | { t: 'hello'; v: 1 | 2; id?: string; name?: string } // id: this phone's secret, remembered by computers that approved it
   | { t: 'ping'; id: number }
   | { t: 'move'; dx: number; dy: number } // touchpad, phone px already scaled
   | { t: 'click'; b: 'left' | 'right' }
@@ -21,6 +21,8 @@ export type Mode = 'idle' | 'pdf' | 'agent';
 /** Laptop -> phone. */
 export type HostMsg =
   | { t: 'pong'; id: number }
+  | { t: 'auth'; state: 'pending' | 'denied' } // nothing but ping is obeyed until the computer approves the phone
+  | { t: 'code'; code: string } // the computer changed its pairing code: follow it
   | { t: 'state'; mode: Mode; page: number; total: number; aspect: number; tour?: boolean }; // tour: agent can hold keys
 
 /** Laptop browser -> desktop agent (ws://localhost). */

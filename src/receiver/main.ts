@@ -29,6 +29,12 @@ const el = {
   laser: $('#laser'),
   cursor: $<SVGElement>('#vcursor'),
   toast: $('#toast'),
+  rotate: $<HTMLButtonElement>('#rotate'),
+  forget: $<HTMLButtonElement>('#forget'),
+  approve: $('#approve'),
+  approveName: $('#approve-name'),
+  approveYes: $<HTMLButtonElement>('#approve-yes'),
+  approveNo: $<HTMLButtonElement>('#approve-no'),
 };
 
 function setStatus(node: HTMLElement, text: string, tone: 'ok' | 'warn' | 'off' | 'err'): void {
@@ -46,14 +52,36 @@ function toast(text: string): void {
 
 // ---------------------------------------------------------------- pairing
 
+// The pairing code lives for one browser session: a reload keeps it (phones reconnect by themselves),
+// closing the tab or the browser retires it, so a code seen or photographed earlier stops working.
 const CODE_KEY = 'cfx.hostCode';
-let code = normalizeCode(store.get(CODE_KEY) ?? '') ?? newCode();
+const session = {
+  get(key: string): string | null {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key: string, value: string): void {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {
+      /* storage blocked: the code just changes on reload */
+    }
+  },
+};
+store.set(CODE_KEY, null); // older versions kept the code forever in localStorage
+let code = normalizeCode(session.get(CODE_KEY) ?? '') ?? newCode();
 let peer: Peer | null = null;
 let idTakenRetries = 0;
-const conns = new Map<DataConnection, { lastSeen: number }>();
+
+/** A phone is obeyed only once `ok`: its secret is on the trusted list, or someone approved it on this computer. */
+type PhoneMeta = { lastSeen: number; ok: boolean; id: string; name: string };
+const conns = new Map<DataConnection, PhoneMeta>();
 
 async function showCode(): Promise<void> {
-  store.set(CODE_KEY, code);
+  session.set(CODE_KEY, code);
   el.code.textContent = code.split('').join(' ');
   el.codeMini.textContent = code;
   el.pairHost.textContent = `${location.host}${import.meta.env.DEV ? '/remote.html' : '/remote'}`;
@@ -76,10 +104,7 @@ function startPeer(): void {
 
   p.on('connection', (conn) => {
     conn.on('open', () => {
-      conns.set(conn, { lastSeen: Date.now() });
-      renderDevices();
-      sendState(conn);
-      toast('Teléfono conectado');
+      conns.set(conn, { lastSeen: Date.now(), ok: false, id: '', name: '' });
     });
     conn.on('data', (data) => {
       const meta = conns.get(conn);
@@ -87,9 +112,12 @@ function startPeer(): void {
       handle(conn, data as RemoteMsg);
     });
     const drop = () => {
-      if (!conns.delete(conn)) return;
+      const meta = conns.get(conn);
+      if (!meta) return;
+      conns.delete(conn);
       renderDevices();
-      if (laser.on) handle(conn, { t: 'laser', on: false }); // phone vanished mid-laser: don't leave the dot on
+      renderApproval();
+      if (meta.ok && laser.on) route({ t: 'laser', on: false }); // phone vanished mid-laser: don't leave the dot on
     };
     conn.on('close', drop);
     conn.on('error', drop);
@@ -139,11 +167,14 @@ window.setInterval(() => {
       changed = true;
     }
   }
-  if (changed) renderDevices();
+  if (changed) {
+    renderDevices();
+    renderApproval();
+  }
 }, 2000);
 
 function renderDevices(): void {
-  const n = conns.size;
+  const n = [...conns.values()].filter((m) => m.ok).length;
   setStatus(el.devices, n === 0 ? 'Sin teléfono vinculado' : n === 1 ? '1 teléfono vinculado' : `${n} teléfonos vinculados`, n ? 'ok' : 'off');
   el.hudDevices.textContent = n === 1 ? '1 teléfono' : `${n} teléfonos`;
   el.hudDevices.dataset.tone = n ? 'ok' : 'off';
@@ -169,8 +200,123 @@ function stateMsg(): HostMsg {
 function sendState(target?: DataConnection): void {
   const msg = stateMsg();
   if (target) target.send(msg);
-  else for (const c of conns.keys()) c.send(msg);
+  else for (const [c, meta] of conns) if (meta.ok) c.send(msg);
 }
+
+// ---------------------------------------------------------------- phone approval
+
+const TRUSTED_KEY = 'cfx.trusted';
+const MAX_TRUSTED = 20;
+const MAX_WAITING = 3;
+const ID_RE = /^[0-9a-f]{32}$/;
+
+/** Secrets of phones approved on this computer -> label. */
+function trusted(): Record<string, string> {
+  try {
+    const v: unknown = JSON.parse(store.get(TRUSTED_KEY) ?? '{}');
+    return v && typeof v === 'object' ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function trust(id: string, name: string): void {
+  const all = trusted();
+  delete all[id];
+  all[id] = name; // most recent last
+  const keys = Object.keys(all);
+  for (const old of keys.slice(0, Math.max(keys.length - MAX_TRUSTED, 0))) delete all[old];
+  store.set(TRUSTED_KEY, JSON.stringify(all));
+  renderTrusted();
+}
+
+function renderTrusted(): void {
+  const n = Object.keys(trusted()).length;
+  el.forget.hidden = n === 0;
+  el.forget.textContent = n === 1 ? 'Olvidar 1 teléfono autorizado' : `Olvidar ${n} teléfonos autorizados`;
+}
+
+const waiting = (): [DataConnection, PhoneMeta][] => [...conns].filter(([, m]) => !m.ok && m.name);
+
+function admit(conn: DataConnection, meta: PhoneMeta): void {
+  meta.ok = true;
+  renderDevices();
+  sendState(conn);
+  toast('Teléfono conectado');
+}
+
+function reject(conn: DataConnection): void {
+  conn.send({ t: 'auth', state: 'denied' } satisfies HostMsg);
+  conns.delete(conn);
+  window.setTimeout(() => conn.close(), 300); // let the verdict reach the phone first
+}
+
+function onHello(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, { t: 'hello' }>): void {
+  if (meta.ok) {
+    sendState(conn);
+    return;
+  }
+  meta.id = typeof msg.id === 'string' && ID_RE.test(msg.id) ? msg.id : '';
+  if (meta.id && meta.id in trusted()) {
+    admit(conn, meta);
+    return;
+  }
+  if (meta.name) return; // already asking about this one
+  if (waiting().length >= MAX_WAITING) {
+    reject(conn);
+    return;
+  }
+  meta.name = (typeof msg.name === 'string' ? msg.name.replace(/[^\p{L}\p{N} ]/gu, '').slice(0, 24) : '') || 'Un teléfono';
+  conn.send({ t: 'auth', state: 'pending' } satisfies HostMsg);
+  renderApproval();
+}
+
+function renderApproval(): void {
+  const next = waiting()[0];
+  el.approve.hidden = !next;
+  if (next) el.approveName.textContent = next[1].name;
+}
+
+function decide(allow: boolean): void {
+  const next = waiting()[0];
+  if (!next) return;
+  const [conn, meta] = next;
+  if (allow) {
+    if (meta.id) trust(meta.id, meta.name);
+    admit(conn, meta);
+  } else {
+    reject(conn);
+  }
+  renderApproval();
+}
+el.approveYes.addEventListener('click', () => decide(true));
+el.approveNo.addEventListener('click', () => decide(false));
+
+el.forget.addEventListener('click', () => {
+  store.set(TRUSTED_KEY, null);
+  renderTrusted();
+  rotateCode(); // also drops the phones connected right now
+  toast('Teléfonos olvidados: van a pedir permiso de nuevo');
+});
+
+/** New pairing code. Approved phones that are connected are told and follow by themselves. */
+function rotateCode(): void {
+  const next = newCode();
+  for (const [c, meta] of conns) if (meta.ok && meta.id in trusted()) c.send({ t: 'code', code: next } satisfies HostMsg);
+  code = next;
+  void showCode();
+  // Give the announcement time to leave before the old identity is torn down.
+  window.setTimeout(() => {
+    conns.clear();
+    renderDevices();
+    renderApproval();
+    startPeer();
+  }, 400);
+}
+el.rotate.addEventListener('click', () => {
+  rotateCode();
+  toast('Código nuevo: el anterior ya no sirve');
+});
 
 // ---------------------------------------------------------------- pointer overlays
 
@@ -201,15 +347,17 @@ requestAnimationFrame(frame);
 const clamp01 = (v: number) => Math.min(Math.max(v, 0), 1);
 
 function handle(conn: DataConnection, msg: RemoteMsg): void {
+  const meta = conns.get(conn);
+  if (!meta) return;
+  if (msg.t === 'ping') conn.send({ t: 'pong', id: msg.id } satisfies HostMsg);
+  else if (msg.t === 'hello') onHello(conn, meta, msg);
+  else if (meta.ok) route(msg); // nothing else is obeyed from a phone that was not approved
+}
+
+function route(msg: Exclude<RemoteMsg, { t: 'hello' | 'ping' }>): void {
   const mode = currentMode();
   const toAgent = mode === 'agent';
   switch (msg.t) {
-    case 'hello':
-      sendState(conn);
-      break;
-    case 'ping':
-      conn.send({ t: 'pong', id: msg.id } satisfies HostMsg);
-      break;
     case 'key':
       if (toAgent) agent.send(msg);
       else if (msg.k === 'next' || msg.k === 'prev') navigate(msg.k === 'next' ? 1 : -1);
@@ -454,6 +602,7 @@ navigator.locks?.request('clickerfex-keepalive', () => new Promise<void>(() => {
 void showCode();
 startPeer();
 renderDevices();
+renderTrusted();
 if (store.get(AGENT_KEY) === '1') agent.enable();
 renderAgent();
 window.addEventListener('beforeunload', () => peer?.destroy());
