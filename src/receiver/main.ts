@@ -4,6 +4,7 @@ import QRCode from 'qrcode';
 import { AgentBridge } from './agent';
 import { PdfDeck } from './pdf';
 import type { HostMsg, Mode, RemoteMsg } from '../shared/protocol';
+import { isHex, keyId, proof, randomHex, sameHex } from '../shared/auth';
 import { keepAwake, newCode, normalizeCode, peerId, peerOptions, remoteUrl, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -77,7 +78,15 @@ let peer: Peer | null = null;
 let idTakenRetries = 0;
 
 /** A phone is obeyed only once `ok`: its secret is on the trusted list, or someone approved it on this computer. */
-type PhoneMeta = { lastSeen: number; ok: boolean; id: string; name: string };
+type PhoneMeta = {
+  lastSeen: number;
+  ok: boolean;
+  name: string;
+  nonce: string; // challenge sent to this connection
+  key: string; // offered by a phone that is waiting for approval
+  asking: boolean;
+  proved: boolean; // one proof attempt per connection
+};
 const conns = new Map<DataConnection, PhoneMeta>();
 
 async function showCode(): Promise<void> {
@@ -104,7 +113,7 @@ function startPeer(): void {
 
   p.on('connection', (conn) => {
     conn.on('open', () => {
-      conns.set(conn, { lastSeen: Date.now(), ok: false, id: '', name: '' });
+      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', key: '', asking: false, proved: false });
     });
     conn.on('data', (data) => {
       const meta = conns.get(conn);
@@ -205,27 +214,35 @@ function sendState(target?: DataConnection): void {
 
 // ---------------------------------------------------------------- phone approval
 
-const TRUSTED_KEY = 'cfx.trusted';
-const MAX_TRUSTED = 20;
+const TRUSTED_KEY = 'cfx.trusted2';
+const HOST_KEY = 'cfx.hostId';
+const MAX_TRUSTED = 50;
 const MAX_WAITING = 3;
-const ID_RE = /^[0-9a-f]{32}$/;
+store.set('cfx.trusted', null); // first scheme kept phone secrets that travelled on every connection
 
-/** Secrets of phones approved on this computer -> label. */
-function trusted(): Record<string, string> {
+/** This computer's public id. Phones keep one key per id, so a new id makes every phone a stranger again. */
+let hostId = store.get(HOST_KEY) ?? '';
+if (!isHex(hostId, 32)) {
+  hostId = randomHex(16);
+  store.set(HOST_KEY, hostId);
+}
+
+type Trusted = Record<string, { k: string; name: string }>; // key id -> key
+
+function trusted(): Trusted {
   try {
     const v: unknown = JSON.parse(store.get(TRUSTED_KEY) ?? '{}');
-    return v && typeof v === 'object' ? (v as Record<string, string>) : {};
+    return v && typeof v === 'object' ? (v as Trusted) : {};
   } catch {
     return {};
   }
 }
 
-function trust(id: string, name: string): void {
+async function trust(key: string, name: string): Promise<void> {
   const all = trusted();
-  delete all[id];
-  all[id] = name; // most recent last
-  const keys = Object.keys(all);
-  for (const old of keys.slice(0, Math.max(keys.length - MAX_TRUSTED, 0))) delete all[old];
+  all[await keyId(key)] = { k: key, name };
+  const ids = Object.keys(all);
+  for (const old of ids.slice(0, Math.max(ids.length - MAX_TRUSTED, 0))) delete all[old];
   store.set(TRUSTED_KEY, JSON.stringify(all));
   renderTrusted();
 }
@@ -236,17 +253,18 @@ function renderTrusted(): void {
   el.forget.textContent = n === 1 ? 'Olvidar 1 teléfono autorizado' : `Olvidar ${n} teléfonos autorizados`;
 }
 
-const waiting = (): [DataConnection, PhoneMeta][] => [...conns].filter(([, m]) => !m.ok && m.name);
+const waiting = (): [DataConnection, PhoneMeta][] => [...conns].filter(([, m]) => !m.ok && m.asking);
 
 function admit(conn: DataConnection, meta: PhoneMeta): void {
   meta.ok = true;
+  meta.asking = false;
   renderDevices();
   sendState(conn);
   toast('Teléfono conectado');
 }
 
-function reject(conn: DataConnection): void {
-  conn.send({ t: 'auth', state: 'denied' } satisfies HostMsg);
+function reject(conn: DataConnection, state: 'denied' | 'unknown' = 'denied'): void {
+  conn.send({ t: 'auth', state } satisfies HostMsg);
   conns.delete(conn);
   window.setTimeout(() => conn.close(), 300); // let the verdict reach the phone first
 }
@@ -256,17 +274,32 @@ function onHello(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, 
     sendState(conn);
     return;
   }
-  meta.id = typeof msg.id === 'string' && ID_RE.test(msg.id) ? msg.id : '';
-  if (meta.id && meta.id in trusted()) {
-    admit(conn, meta);
-    return;
-  }
-  if (meta.name) return; // already asking about this one
+  if (meta.nonce) return; // one challenge per connection
+  meta.name = (typeof msg.name === 'string' ? msg.name.replace(/[^\p{L}\p{N} ]/gu, '').slice(0, 24) : '') || 'Un teléfono';
+  meta.nonce = randomHex(16);
+  conn.send({ t: 'challenge', host: hostId, nonce: meta.nonce } satisfies HostMsg);
+}
+
+/** A phone approved earlier: it must sign this connection's nonce and the code it dialled. */
+async function onProve(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, { t: 'prove' }>): Promise<void> {
+  if (meta.ok || !meta.nonce || meta.proved) return;
+  meta.proved = true;
+  const entry = isHex(msg.kid, 16) && Object.hasOwn(trusted(), msg.kid) ? trusted()[msg.kid] : undefined;
+  const good = !!entry && isHex(entry.k, 64) && isHex(msg.mac, 64) && sameHex(msg.mac, await proof(entry.k, meta.nonce, code));
+  if (!conns.has(conn)) return; // gone while we were checking
+  if (good) admit(conn, meta);
+  else reject(conn, 'unknown');
+}
+
+/** A phone this computer has never approved: ask the person at the computer. */
+function onEnrol(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, { t: 'enrol' }>): void {
+  if (meta.ok || !meta.nonce || meta.asking || !isHex(msg.key, 64)) return;
   if (waiting().length >= MAX_WAITING) {
     reject(conn);
     return;
   }
-  meta.name = (typeof msg.name === 'string' ? msg.name.replace(/[^\p{L}\p{N} ]/gu, '').slice(0, 24) : '') || 'Un teléfono';
+  meta.key = msg.key;
+  meta.asking = true;
   conn.send({ t: 'auth', state: 'pending' } satisfies HostMsg);
   renderApproval();
 }
@@ -282,7 +315,7 @@ function decide(allow: boolean): void {
   if (!next) return;
   const [conn, meta] = next;
   if (allow) {
-    if (meta.id) trust(meta.id, meta.name);
+    void trust(meta.key, meta.name);
     admit(conn, meta);
   } else {
     reject(conn);
@@ -294,6 +327,8 @@ el.approveNo.addEventListener('click', () => decide(false));
 
 el.forget.addEventListener('click', () => {
   store.set(TRUSTED_KEY, null);
+  hostId = randomHex(16); // phones still holding a key for the old id start over instead of proving to nobody
+  store.set(HOST_KEY, hostId);
   renderTrusted();
   rotateCode(); // also drops the phones connected right now
   toast('Teléfonos olvidados: van a pedir permiso de nuevo');
@@ -302,7 +337,7 @@ el.forget.addEventListener('click', () => {
 /** New pairing code. Approved phones that are connected are told and follow by themselves. */
 function rotateCode(): void {
   const next = newCode();
-  for (const [c, meta] of conns) if (meta.ok && meta.id in trusted()) c.send({ t: 'code', code: next } satisfies HostMsg);
+  for (const [c, meta] of conns) if (meta.ok) c.send({ t: 'code', code: next } satisfies HostMsg);
   code = next;
   void showCode();
   // Give the announcement time to leave before the old identity is torn down.
@@ -351,10 +386,12 @@ function handle(conn: DataConnection, msg: RemoteMsg): void {
   if (!meta) return;
   if (msg.t === 'ping') conn.send({ t: 'pong', id: msg.id } satisfies HostMsg);
   else if (msg.t === 'hello') onHello(conn, meta, msg);
+  else if (msg.t === 'prove') void onProve(conn, meta, msg);
+  else if (msg.t === 'enrol') onEnrol(conn, meta, msg);
   else if (meta.ok) route(msg); // nothing else is obeyed from a phone that was not approved
 }
 
-function route(msg: Exclude<RemoteMsg, { t: 'hello' | 'ping' }>): void {
+function route(msg: Exclude<RemoteMsg, { t: 'hello' | 'ping' | 'prove' | 'enrol' }>): void {
   const mode = currentMode();
   const toAgent = mode === 'agent';
   switch (msg.t) {
