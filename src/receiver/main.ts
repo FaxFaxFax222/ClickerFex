@@ -156,7 +156,14 @@ function currentMode(): Mode {
 }
 
 function stateMsg(): HostMsg {
-  return { t: 'state', mode: currentMode(), page: deck.page, total: deck.total, aspect: window.innerWidth / window.innerHeight };
+  return {
+    t: 'state',
+    mode: currentMode(),
+    page: deck.page,
+    total: deck.total,
+    aspect: window.innerWidth / window.innerHeight,
+    tour: agent.version >= 2,
+  };
 }
 
 function sendState(target?: DataConnection): void {
@@ -208,6 +215,7 @@ function handle(conn: DataConnection, msg: RemoteMsg): void {
       else if (msg.k === 'next' || msg.k === 'prev') navigate(msg.k === 'next' ? 1 : -1);
       break;
     case 'text':
+    case 'hold':
       if (toAgent) agent.send(msg);
       break;
     case 'move':
@@ -401,9 +409,11 @@ window.addEventListener('keydown', (e) => {
 // ---------------------------------------------------------------- agent (system mode)
 
 const AGENT_KEY = 'cfx.agent';
+let agentWasConnected = false;
 const agent = new AgentBridge((connected) => {
   renderAgent();
-  if (connected) toast('Agente conectado: el teléfono controla esta computadora');
+  if (connected && !agentWasConnected) toast('Agente conectado: el teléfono controla esta computadora');
+  agentWasConnected = connected;
   sendState();
 });
 

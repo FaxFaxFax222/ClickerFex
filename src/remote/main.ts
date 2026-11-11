@@ -1,6 +1,6 @@
 import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
-import type { HostMsg, Key, RemoteMsg } from '../shared/protocol';
+import type { HoldKey, HostMsg, Key, Mode, RemoteMsg } from '../shared/protocol';
 import { AimTracker, OneEuro, motionPermissionPending, requestMotionPermission, type Aim } from './aim';
 import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
@@ -34,6 +34,16 @@ const el = {
   kbdClose: $('#kbd-close'),
   kbdText: $<HTMLTextAreaElement>('#kbd-text'),
   kbdSend: $('#kbd-send'),
+  menuClose: $('#menu-close'),
+  tourSwap: $<HTMLInputElement>('#tour-swap'),
+  modeClicker: $<HTMLButtonElement>('#mode-clicker'),
+  modeTour: $<HTMLButtonElement>('#mode-tour'),
+  clicker: $('#clicker'),
+  tour: $('#tour'),
+  tourNotice: $('#tour-notice'),
+  look: $('#look'),
+  walk: $('#walk'),
+  zoom: $('#zoom'),
   mic: $<HTMLButtonElement>('#mic'),
   micLabel: $('#mic-label'),
   micCaption: $('#mic-caption'),
@@ -54,6 +64,7 @@ const settings = {
   pad: Number(store.get('cfx.padSens') ?? 1.4),
   fov: Number(store.get('cfx.laserFov') ?? 30), // degrees the screen spans from the presenter
   laserToggle: store.get('cfx.laserToggle') === '1',
+  tourSwap: store.get('cfx.tourSwap') === '1',
 };
 
 function bindSettings(): void {
@@ -81,6 +92,13 @@ function bindSettings(): void {
     if (laserOn) setLaser(false);
     render();
   });
+  el.tourSwap.checked = settings.tourSwap;
+  el.tour.toggleAttribute('data-swap', settings.tourSwap);
+  el.tourSwap.addEventListener('change', () => {
+    settings.tourSwap = el.tourSwap.checked;
+    store.set('cfx.tourSwap', settings.tourSwap ? '1' : null);
+    el.tour.toggleAttribute('data-swap', settings.tourSwap);
+  });
   renderLaserLabel = render;
   render();
 }
@@ -98,6 +116,8 @@ let pingId = 0;
 let redialTimer: number | undefined;
 let aspect = 16 / 9;
 let releaseWake: (() => void) | null = null;
+let hostMode: Mode = 'idle';
+let hostTour = false; // the desktop agent is recent enough to hold keys
 
 function setStatus(text: string, tone: 'ok' | 'warn' | 'err'): void {
   el.status.dataset.tone = tone;
@@ -198,7 +218,10 @@ function onHost(msg: HostMsg): void {
       break;
     case 'state':
       aspect = msg.aspect || aspect;
-      el.counter.textContent = msg.mode === 'pdf' ? `${msg.page} / ${msg.total}` : msg.mode === 'agent' ? 'Modo sistema' : '';
+      hostMode = msg.mode;
+      hostTour = msg.tour === true;
+      renderTourNotice();
+      el.counter.textContent = msg.mode === 'pdf' ? `${msg.page} / ${msg.total}` : '';
       // Typing/dictation needs the desktop agent: only offered in system mode.
       el.kbdBtn.hidden = msg.mode !== 'agent';
       if (msg.mode !== 'agent' && el.kbd.open) closeKeyboard();
@@ -229,6 +252,8 @@ document.addEventListener('visibilitychange', () => {
     if (laserOn) setLaser(false);
     if (listening) stopDictation();
     tracker.pause();
+    releaseTour();
+    stopKeyRepeat();
   }
 });
 
@@ -381,13 +406,19 @@ el.laserBtn.addEventListener('click', askMotionPermission);
 
 // ---------------------------------------------------------------- send loop (one batch per frame)
 
+let lastFlush = performance.now();
 function flush(): void {
+  const now = performance.now();
   if (connected) {
     const mx = Math.trunc(acc.mx), my = Math.trunc(acc.my);
     if (mx || my) {
       send({ t: 'move', dx: mx, dy: my });
       acc.mx -= mx;
       acc.my -= my;
+    }
+    if (zoomRate) {
+      // Wheel up zooms in. Full deflection = 10 wheel notches per second (40 px each).
+      acc.scroll -= zoomRate * Math.abs(zoomRate) * 400 * Math.min((now - lastFlush) / 1000, 0.05);
     }
     const sc = Math.trunc(acc.scroll);
     if (sc) {
@@ -401,6 +432,7 @@ function flush(): void {
   } else {
     acc.mx = acc.my = acc.scroll = 0;
   }
+  lastFlush = now;
   requestAnimationFrame(flush);
 }
 requestAnimationFrame(flush);
@@ -528,16 +560,218 @@ el.kbdText.addEventListener('keydown', (e) => {
     sendTyped();
   }
 });
+// Keys marked data-repeat (backspace) repeat while held, like a real keyboard.
+let stopKeyRepeat = () => {};
 for (const btn of el.kbd.querySelectorAll<HTMLButtonElement>('[data-key]')) {
-  btn.addEventListener('click', () => {
-    send({ t: 'key', k: btn.dataset.key as Key });
+  const k = btn.dataset.key as Key;
+  if (!('repeat' in btn.dataset)) {
+    btn.addEventListener('click', () => {
+      send({ t: 'key', k });
+      haptic(10);
+    });
+    continue;
+  }
+  let delay: number | undefined;
+  let interval: number | undefined;
+  const end = () => {
+    clearTimeout(delay);
+    clearInterval(interval);
+    btn.classList.remove('pressed');
+  };
+  stopKeyRepeat = end;
+  btn.addEventListener('pointerdown', (e) => {
+    e.preventDefault(); // keeps the phone keyboard open if the text box had focus
+    capture(btn, e.pointerId);
+    end();
+    btn.classList.add('pressed');
+    send({ t: 'key', k });
     haptic(10);
+    delay = window.setTimeout(() => {
+      haptic(6);
+      interval = window.setInterval(() => send({ t: 'key', k }), 50);
+    }, 380);
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) btn.addEventListener(type, end);
+  btn.addEventListener('contextmenu', (e) => e.preventDefault());
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') send({ t: 'key', k });
   });
 }
+el.kbd.addEventListener('close', () => stopKeyRepeat());
+
+// ---------------------------------------------------------------- tour mode (joystick for 3D walkthroughs)
+
+type Dir = 'up' | 'down' | 'left' | 'right';
+const DIRS: readonly Dir[] = ['up', 'down', 'left', 'right'];
+
+/** A thumb surface that holds up to two keys on the computer, by direction (8-way). */
+class DirControl {
+  readonly held = new Set<HoldKey>();
+  private pointer: number | null = null;
+  private readonly knob: HTMLElement | null;
+
+  constructor(
+    private readonly node: HTMLElement,
+    private readonly keys: Record<Dir, HoldKey>,
+    private readonly deadzone: number,
+  ) {
+    this.knob = node.querySelector<HTMLElement>('.knob');
+    node.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (this.pointer !== null) return;
+      this.pointer = e.pointerId;
+      capture(node, e.pointerId);
+      node.classList.add('active');
+      this.track(e);
+    });
+    node.addEventListener('pointermove', (e) => {
+      if (e.pointerId === this.pointer) this.track(e);
+    });
+    const end = (e: PointerEvent) => {
+      if (e.pointerId === this.pointer) this.release();
+    };
+    node.addEventListener('pointerup', end);
+    node.addEventListener('pointercancel', end);
+    node.addEventListener('lostpointercapture', end);
+  }
+
+  private track(e: PointerEvent): void {
+    const r = this.node.getBoundingClientRect();
+    const radius = r.width / 2;
+    let x = (e.clientX - r.left - radius) / radius;
+    let y = (e.clientY - r.top - r.height / 2) / radius;
+    const mag = Math.hypot(x, y);
+    if (mag > 1) {
+      x /= mag;
+      y /= mag;
+    }
+    if (this.knob) this.knob.style.transform = `translate(${x * radius * 0.56}px, ${y * radius * 0.56}px)`;
+    const want = new Set<Dir>();
+    if (mag > this.deadzone) {
+      // 8-way: an axis counts when it carries more than sin(22.5deg) of the deflection.
+      const cut = 0.383 * Math.min(mag, 1);
+      if (y < -cut) want.add('up');
+      if (y > cut) want.add('down');
+      if (x < -cut) want.add('left');
+      if (x > cut) want.add('right');
+    }
+    this.apply(want);
+  }
+
+  private apply(want: Set<Dir>): void {
+    let pressed = false;
+    for (const d of DIRS) {
+      const key = this.keys[d];
+      const on = want.has(d);
+      this.node.classList.toggle(`d-${d}`, on);
+      if (on === this.held.has(key)) continue;
+      if (on) {
+        this.held.add(key);
+        pressed = true;
+      } else {
+        this.held.delete(key);
+      }
+      send({ t: 'hold', k: key, on });
+    }
+    if (pressed) haptic(8);
+  }
+
+  release(): void {
+    this.pointer = null;
+    this.node.classList.remove('active');
+    if (this.knob) this.knob.style.transform = '';
+    this.apply(new Set());
+  }
+}
+
+// Matterport: WASD walks, IJKL turns the camera.
+const tourControls = [
+  new DirControl(el.walk, { up: 'w', down: 's', left: 'a', right: 'd' }, 0.2),
+  new DirControl(el.look, { up: 'i', down: 'k', left: 'j', right: 'l' }, 0.3),
+];
+
+// Held keys are re-sent: the agent turns that into key repeat and lets go by itself if the phone goes silent.
+window.setInterval(() => {
+  for (const c of tourControls) for (const k of c.held) send({ t: 'hold', k, on: true });
+}, 120);
+
+// Zoom lever: springs back to the centre; deflection = mouse-wheel speed.
+let zoomRate = 0; // -1..1, up = zoom in
+let zoomPointer: number | null = null;
+const leverKnob = el.zoom.querySelector<HTMLElement>('.lever-knob')!;
+
+function trackZoom(e: PointerEvent): void {
+  const r = el.zoom.getBoundingClientRect();
+  const travel = (r.height - leverKnob.offsetHeight) / 2 - 6;
+  const offset = Math.min(Math.max(e.clientY - r.top - r.height / 2, -travel), travel);
+  leverKnob.style.transform = `translateY(${offset}px)`;
+  const v = -offset / travel;
+  zoomRate = Math.abs(v) < 0.15 ? 0 : v;
+}
+function endZoom(): void {
+  zoomPointer = null;
+  zoomRate = 0;
+  leverKnob.style.transform = '';
+  el.zoom.classList.remove('active');
+}
+el.zoom.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  if (zoomPointer !== null) return;
+  zoomPointer = e.pointerId;
+  capture(el.zoom, e.pointerId);
+  el.zoom.classList.add('active');
+  haptic(8);
+  trackZoom(e);
+});
+el.zoom.addEventListener('pointermove', (e) => {
+  if (e.pointerId === zoomPointer) trackZoom(e);
+});
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) {
+  el.zoom.addEventListener(type, (e) => {
+    if (e.pointerId === zoomPointer) endZoom();
+  });
+}
+
+function releaseTour(): void {
+  for (const c of tourControls) c.release();
+  endZoom();
+}
+
+function renderTourNotice(): void {
+  const text =
+    hostMode !== 'agent'
+      ? 'El recorrido necesita el modo sistema: abrí el agente en la computadora y tocá "Conectar agente".'
+      : !hostTour
+        ? 'El agente de la computadora es una versión anterior. Descargalo de nuevo desde la página de ClickerFex para usar el recorrido.'
+        : '';
+  el.tourNotice.textContent = text;
+  el.tourNotice.hidden = !text;
+}
+
+type UiMode = 'clicker' | 'tour';
+function setUiMode(mode: UiMode): void {
+  store.set('cfx.uiMode', mode === 'tour' ? 'tour' : null);
+  el.app.dataset.mode = mode;
+  el.clicker.hidden = mode !== 'clicker';
+  el.tour.hidden = mode !== 'tour';
+  el.modeClicker.setAttribute('aria-selected', String(mode === 'clicker'));
+  el.modeTour.setAttribute('aria-selected', String(mode === 'tour'));
+  if (laserOn) setLaser(false);
+  releaseTour();
+}
+el.modeClicker.addEventListener('click', () => setUiMode('clicker'));
+el.modeTour.addEventListener('click', () => setUiMode('tour'));
 
 // ---------------------------------------------------------------- menu / connect screen
 
 el.menuBtn.addEventListener('click', () => el.menu.showModal());
+el.menuClose.addEventListener('click', () => el.menu.close());
+// Tapping the dimmed area above a sheet closes it.
+for (const sheet of [el.menu, el.kbd]) {
+  sheet.addEventListener('click', (e) => {
+    if (e.target === sheet) sheet.close();
+  });
+}
 el.disconnect.addEventListener('click', () => {
   el.menu.close();
   stop();
@@ -575,6 +809,8 @@ for (const type of ['touchmove', 'gesturestart', 'contextmenu'] as const) {
 // ---------------------------------------------------------------- boot
 
 bindSettings();
+setUiMode(store.get('cfx.uiMode') === 'tour' ? 'tour' : 'clicker');
+renderTourNotice();
 const fromHash = normalizeCode(location.hash.slice(1));
 if (fromHash) start(fromHash);
 else showConnect(normalizeCode(store.get(CODE_KEY) ?? '') ?? '');
