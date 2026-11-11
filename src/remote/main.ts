@@ -2,6 +2,7 @@ import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
 import type { HoldKey, HostMsg, Key, Mode, RemoteMsg } from '../shared/protocol';
 import { AimTracker, OneEuro, motionPermissionPending, requestMotionPermission, type Aim } from './aim';
+import { isHex, keyId, pairingNumber, proof, randomHex, sha256Hex } from '../shared/auth';
 import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -129,15 +130,50 @@ let releaseWake: (() => void) | null = null;
 let admitted = false; // the computer accepted this phone on the current link
 let denied = false;
 
-// This phone's secret. A computer that approved it once recognises it and stops asking.
-const DEVICE_KEY = 'cfx.deviceId';
-const deviceId =
-  store.get(DEVICE_KEY) ??
-  (() => {
-    const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
-    store.set(DEVICE_KEY, id);
-    return id;
-  })();
+// One key per computer that approved this phone, by the computer's public id. Keys are never sent again
+// after approval: the phone only proves it holds them (see shared/auth.ts).
+const HOSTS_KEY = 'cfx.hosts';
+const MAX_HOSTS = 30;
+store.set('cfx.deviceId', null); // first scheme: one secret sent to every computer
+function knownHosts(): Record<string, string> {
+  try {
+    const v: unknown = JSON.parse(store.get(HOSTS_KEY) ?? '{}');
+    return v && typeof v === 'object' ? (v as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+let enrolling: { host: string; key: string } | null = null; // offered on this link, kept only if admitted
+let offerKey = ''; // made per link and committed to in `hello`, before the computer's nonce is known
+let pairNumber = '';
+let dialledCode = '';
+
+async function onChallenge(c: DataConnection, host: unknown, nonce: unknown): Promise<void> {
+  if (!isHex(host, 32) || !isHex(nonce, 32) || admitted) return;
+  const hosts = knownHosts();
+  const key = Object.hasOwn(hosts, host) ? hosts[host] : undefined;
+  let reply: RemoteMsg;
+  if (key && isHex(key, 64)) {
+    reply = { t: 'prove', kid: await keyId(key), mac: await proof(key, nonce, dialledCode) };
+  } else {
+    enrolling = { host, key: offerKey };
+    pairNumber = await pairingNumber(offerKey, nonce, dialledCode);
+    reply = { t: 'enrol', key: offerKey };
+  }
+  if (c === conn && c.open) c.send(reply);
+}
+
+function rememberHost(): void {
+  if (!enrolling) return;
+  const hosts = knownHosts();
+  delete hosts[enrolling.host];
+  hosts[enrolling.host] = enrolling.key; // most recent last
+  const ids = Object.keys(hosts);
+  for (const old of ids.slice(0, Math.max(ids.length - MAX_HOSTS, 0))) delete hosts[old];
+  store.set(HOSTS_KEY, JSON.stringify(hosts));
+  enrolling = null;
+}
+
 const ua = navigator.userAgent;
 const deviceName = /iPhone/.test(ua) ? 'Un iPhone' : /iPad/.test(ua) ? 'Un iPad' : /Android/.test(ua) ? 'Un teléfono Android' : 'Un dispositivo';
 let hostMode: Mode = 'idle';
@@ -207,6 +243,7 @@ function dial(): void {
   if (!peer || peer.destroyed || peer.disconnected) return;
   clearTimeout(redialTimer);
   conn?.close();
+  dialledCode = code;
   const c = peer.connect(peerId(code), { reliable: true, serialization: 'json' });
   conn = c;
   c.on('open', () => {
@@ -215,7 +252,12 @@ function dial(): void {
     admitted = false;
     lastPong = Date.now();
     setStatus('Vinculando…', 'warn');
-    c.send({ t: 'hello', v: 2, id: deviceId, name: deviceName } satisfies RemoteMsg);
+    enrolling = null;
+    pairNumber = '';
+    offerKey = randomHex(32);
+    void sha256Hex(offerKey).then((commit) => {
+      if (c === conn && c.open) c.send({ t: 'hello', v: 4, name: deviceName, commit } satisfies RemoteMsg);
+    });
   });
   c.on('data', (data) => {
     if (c !== conn) return;
@@ -242,9 +284,17 @@ function onHost(msg: HostMsg): void {
     case 'pong':
       lastPong = Date.now();
       break;
+    case 'challenge':
+      if (conn) void onChallenge(conn, msg.host, msg.nonce);
+      break;
     case 'auth':
       if (msg.state === 'pending') {
-        setStatus('Aceptá este teléfono en la computadora', 'warn');
+        setStatus(pairNumber ? `Aceptá en la PC si muestra ${pairNumber}` : 'Aceptá este teléfono en la computadora', 'warn');
+      } else if (msg.state === 'unknown') {
+        // The computer lost its record of this phone, or something answered in its name.
+        denied = true;
+        clearTimeout(redialTimer);
+        setStatus('No reconocido: usá "Olvidar teléfonos" en la PC', 'err');
       } else {
         // Don't keep knocking: the person at the computer said no.
         denied = true;
@@ -264,6 +314,7 @@ function onHost(msg: HostMsg): void {
     case 'state':
       if (!admitted) {
         admitted = true;
+        rememberHost();
         haptic(30);
       }
       aspect = msg.aspect || aspect;
