@@ -65,9 +65,17 @@ En el teléfono, el selector **Clicker / Recorrido** cambia el control a un joys
 | Joystick | Girar la cámara | `I` `K` `J` `L` |
 | Palanca | Zoom (vuelve sola al centro) | rueda del mouse |
 
+El modo Recorrido se usa con el teléfono de costado: cámara a la izquierda, movimiento a la derecha, zoom arriba. Si la rotación automática está bloqueada, la pantalla se gira sola.
+
+La cámara de Matterport solo entiende tecla apretada o suelta, así que la velocidad se regula pulsando la tecla: *Ajustes → Velocidad de la cámara* (50 % por defecto) fija la del borde del joystick; cerca del centro gira más lento.
+
 - Antes de empezar, hacé un clic dentro del recorrido con el touchpad: las teclas van a la ventana con foco y el zoom actúa donde está el cursor.
 - Las diagonales mantienen dos teclas a la vez.
 - Seguridad: el teléfono reconfirma las teclas mantenidas ~8 veces por segundo; si deja de hacerlo (pantalla apagada, sin señal), el agente las suelta en 1 s.
+
+## Varios monitores
+
+El láser apunta dentro del monitor donde está el cursor en el momento de encenderlo. Para cambiar de pantalla: llevá el cursor a esa pantalla con el touchpad y volvé a encender el láser.
 
 ## Arquitectura
 

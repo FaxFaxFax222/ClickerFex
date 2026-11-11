@@ -47,7 +47,7 @@ KEYS = {"next": Key.right, "prev": Key.left, "enter": Key.enter, "backspace": Ke
 # Tour mode (3D walkthroughs such as Matterport): WASD walks, IJKL turns the camera.
 HOLD_KEYS = frozenset("wasdijkl")
 HOLD_TIMEOUT = 1.0  # the phone re-sends held keys ~8x/s; silence means it is gone
-AGENT_VERSION = 2  # 2: held keys
+AGENT_VERSION = 3  # 2: held keys; 3: laser on the monitor under the cursor
 SCROLL_PX_PER_NOTCH = 40
 MAX_TEXT = 4000
 
@@ -80,6 +80,57 @@ def screen_size() -> tuple[int, int]:
         return 1920, 1080
 
 
+Area = tuple[int, int, int, int]  # left, top, width, height in the coordinates pynput's mouse uses
+
+
+def monitor_at(x: float, y: float, fallback: Area, strict: bool = False) -> Area:
+    """The monitor that contains the point (nearest one if none does); `fallback` where that can't be asked."""
+    try:
+        if SYSTEM == "Windows":
+            from ctypes import wintypes
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                    ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD),
+                ]
+
+            u = ctypes.WinDLL("user32", use_last_error=True)
+            u.MonitorFromPoint.restype = ctypes.c_void_p
+            u.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            u.GetMonitorInfoW.restype = wintypes.BOOL
+            u.GetMonitorInfoW.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            mon = u.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)  # MONITOR_DEFAULTTONEAREST
+            if not mon or not u.GetMonitorInfoW(mon, ctypes.byref(info)):
+                raise OSError(f"GetMonitorInfo failed ({ctypes.get_last_error()})")
+            r = info.rcMonitor
+            return r.left, r.top, r.right - r.left, r.bottom - r.top
+        if SYSTEM == "Darwin":
+            from Quartz import CGDisplayBounds, CGGetActiveDisplayList
+
+            err, displays, _count = CGGetActiveDisplayList(32, None, None)
+            if err or not displays:
+                raise OSError(f"CGGetActiveDisplayList failed ({err})")
+            areas = []
+            for d in displays:
+                b = CGDisplayBounds(d)
+                areas.append((int(b.origin.x), int(b.origin.y), int(b.size.width), int(b.size.height)))
+
+            def distance(a: Area) -> float:
+                dx = max(a[0] - x, 0, x - (a[0] + a[2] - 1))
+                dy = max(a[1] - y, 0, y - (a[1] + a[3] - 1))
+                return math.hypot(dx, dy)
+
+            return min(areas, key=distance)
+    except Exception as e:
+        if strict:
+            raise
+        print(f"  aviso: no se pudo detectar el monitor ({e}); el láser usa la pantalla principal")
+    return fallback
+
+
 # ---------------------------------------------------------------------------- laser dot
 
 
@@ -89,7 +140,9 @@ class LaserVisual:
     name = "cursor normal"
 
     def show(self) -> None: ...
-    def move(self, x: float, y: float) -> None: ...
+    def move(self, x: float, y: float) -> None:
+        """x, y: desktop position in the mouse's coordinates (any monitor)."""
+
     def hide(self) -> None: ...
 
 
@@ -307,9 +360,11 @@ class MacOverlayLaser(LaserVisual):
         self.win.orderFrontRegardless()
 
     def move(self, x: float, y: float) -> None:
-        w, h = self.screen_frame.size.width, self.screen_frame.size.height
+        # Mouse coordinates grow downwards from the primary screen's top-left; AppKit's grow upwards from
+        # its bottom-left. Both are in points and share the x axis, on every monitor.
+        primary_h = self.screen_frame.size.height
         s = self.SIZE
-        self.win.setFrameOrigin_((x * w - s / 2 + self.offset[0], (1 - y) * h - s / 2 - self.offset[1]))
+        self.win.setFrameOrigin_((x - s / 2 + self.offset[0], primary_h - y - s / 2 - self.offset[1]))
 
     def hide(self) -> None:
         self.win.orderOut_(None)
@@ -352,10 +407,15 @@ def make_visual(strict: bool = False) -> LaserVisual:
 
 
 class Injector:
-    def __init__(self, width: int, height: int, visual: LaserVisual, ui: Callable[..., None]) -> None:
+    def __init__(
+        self, width: int, height: int, visual: LaserVisual, ui: Callable[..., None], follow_monitor: bool = True
+    ) -> None:
         self.mouse = Mouse()
         self.keyboard = Keyboard()
-        self.w, self.h = width, height
+        self.primary: Area = (0, 0, width, height)
+        self.area = self.primary  # where the laser points: the monitor the cursor was on when it was switched on
+        self.follow_monitor = follow_monitor
+        self.strict = False
         self.scroll_rest = 0.0
         self.visual = visual
         self.ui = ui  # runs visual calls on the GUI thread (macOS) or inline
@@ -395,6 +455,9 @@ class Injector:
         if on == self.laser_on:
             return
         self.laser_on = on
+        if on and self.follow_monitor:
+            x, y = self.mouse.position
+            self.area = monitor_at(x, y, self.primary, self.strict)
         self._visual(self.visual.show if on else self.visual.hide)
 
     def handle(self, msg: dict) -> None:
@@ -404,9 +467,11 @@ class Injector:
         elif t == "lpos":
             x = min(max(float(msg["x"]), 0.0), 1.0)
             y = min(max(float(msg["y"]), 0.0), 1.0)
-            self.mouse.position = (int(x * (self.w - 1)), int(y * (self.h - 1)))
+            left, top, width, height = self.area
+            px, py = left + int(x * (width - 1)), top + int(y * (height - 1))
+            self.mouse.position = (px, py)
             if self.laser_on:
-                self._visual(self.visual.move, x, y)
+                self._visual(self.visual.move, px, py)
         elif t == "laser":
             self.set_laser(bool(msg.get("on")))
         elif t == "click":
@@ -434,7 +499,9 @@ class Injector:
 
 def selftest(injector: Injector) -> None:
     """Exercises the laser visual on a real desktop (used by CI on Windows and macOS)."""
+    injector.strict = True  # a monitor lookup that fails must fail the test, not fall back
     injector.handle({"t": "laser", "on": True})
+    print(f"selftest monitor: {injector.area}")
     for i in range(10):
         injector.handle({"t": "lpos", "x": 0.3 + i * 0.04, "y": 0.5})
     injector.handle({"t": "laser", "on": False})
@@ -451,7 +518,7 @@ def main() -> None:
         default=[],
         help="Origen web adicional permitido (regex), p. ej. https://mi-dominio\\.com",
     )
-    ap.add_argument("--screen", help="Forzar tamaño de pantalla, p. ej. 2560x1440")
+    ap.add_argument("--screen", help="Forzar el láser a la pantalla principal con este tamaño, p. ej. 2560x1440")
     ap.add_argument("--no-dot", action="store_true", help="Láser con el cursor normal, sin punto rojo")
     ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
@@ -470,7 +537,7 @@ def main() -> None:
     else:
         ui = lambda fn: fn()  # noqa: E731
 
-    injector = Injector(w, h, visual, ui)
+    injector = Injector(w, h, visual, ui, follow_monitor=not args.screen)
     stop = threading.Event()
 
     if args.selftest:
