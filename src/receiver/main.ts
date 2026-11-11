@@ -88,6 +88,7 @@ type PhoneMeta = {
   key: string; // offered by a phone that is waiting for approval
   number: string; // shown on both screens while it waits
   asking: boolean;
+  askedAt: number;
   proved: boolean; // one proof attempt per connection
 };
 const conns = new Map<DataConnection, PhoneMeta>();
@@ -116,7 +117,7 @@ function startPeer(): void {
 
   p.on('connection', (conn) => {
     conn.on('open', () => {
-      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', commit: '', key: '', number: '', asking: false, proved: false });
+      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', commit: '', key: '', number: '', asking: false, askedAt: 0, proved: false });
     });
     conn.on('data', (data) => {
       const meta = conns.get(conn);
@@ -256,7 +257,9 @@ function renderTrusted(): void {
   el.forget.textContent = n === 1 ? 'Olvidar 1 teléfono autorizado' : `Olvidar ${n} teléfonos autorizados`;
 }
 
-const waiting = (): [DataConnection, PhoneMeta][] => [...conns].filter(([, m]) => !m.ok && m.asking);
+/** Phones waiting for a decision, in the order they asked (not the order they connected). */
+const waiting = (): [DataConnection, PhoneMeta][] =>
+  [...conns].filter(([, m]) => !m.ok && m.asking).sort((a, b) => a[1].askedAt - b[1].askedAt);
 
 function admit(conn: DataConnection, meta: PhoneMeta): void {
   meta.ok = true;
@@ -308,23 +311,41 @@ async function onEnrol(conn: DataConnection, meta: PhoneMeta, msg: Extract<Remot
   }
   meta.number = number;
   meta.asking = true;
+  meta.askedAt = performance.now();
   conn.send({ t: 'auth', state: 'pending' } satisfies HostMsg);
   renderApproval();
 }
 
+// The request on screen. A click decides this one and no other: a phone that asks later can never slide
+// under a click meant for the request the person just checked.
+let shown: DataConnection | null = null;
+let armTimer: number | undefined;
+const ARM_DELAY_MS = 1200;
+
 function renderApproval(): void {
-  const next = waiting()[0];
-  el.approve.hidden = !next;
-  if (next) {
-    el.approveName.textContent = next[1].name;
-    el.approveNumber.textContent = next[1].number;
+  const queue = waiting();
+  const current = queue.find(([c]) => c === shown) ?? queue[0];
+  el.approve.hidden = !current;
+  if (!current) {
+    shown = null;
+    return;
   }
+  const [conn, meta] = current;
+  el.approveName.textContent = meta.name;
+  el.approveNumber.textContent = meta.number;
+  if (conn === shown) return;
+  shown = conn;
+  // A different request appeared: buttons stay dead for a moment so a click already on its way is not spent on it.
+  el.approveYes.disabled = el.approveNo.disabled = true;
+  clearTimeout(armTimer);
+  armTimer = window.setTimeout(() => (el.approveYes.disabled = el.approveNo.disabled = false), ARM_DELAY_MS);
 }
 
 function decide(allow: boolean): void {
-  const next = waiting()[0];
-  if (!next) return;
-  const [conn, meta] = next;
+  const conn = shown;
+  const meta = conn && conns.get(conn);
+  if (!conn || !meta || meta.ok || !meta.asking || el.approveYes.disabled) return;
+  shown = null;
   if (allow) {
     void trust(meta.key, meta.name);
     admit(conn, meta);
@@ -462,6 +483,7 @@ function navigate(delta: number): void {
 function virtualClick(button: 'left' | 'right'): void {
   showCursor();
   const target = document.elementFromPoint(pointer.x, pointer.y) as HTMLElement | null;
+  if (target?.closest('#approve')) return; // approving a phone takes a person at the computer, not another phone
   const onSlide = !target || target === el.slide || target === el.stage || target === document.body;
   if (deck.total && onSlide) {
     navigate(button === 'left' ? 1 : -1);
