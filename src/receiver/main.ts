@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import { AgentBridge } from './agent';
 import { PdfDeck } from './pdf';
 import type { HostMsg, Mode, RemoteMsg } from '../shared/protocol';
-import { isHex, keyId, proof, randomHex, sameHex } from '../shared/auth';
+import { isHex, keyId, pairingNumber, proof, randomHex, sameHex, sha256Hex } from '../shared/auth';
 import { keepAwake, newCode, normalizeCode, peerId, peerOptions, remoteUrl, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -34,6 +34,7 @@ const el = {
   forget: $<HTMLButtonElement>('#forget'),
   approve: $('#approve'),
   approveName: $('#approve-name'),
+  approveNumber: $('#approve-number'),
   approveYes: $<HTMLButtonElement>('#approve-yes'),
   approveNo: $<HTMLButtonElement>('#approve-no'),
 };
@@ -83,7 +84,9 @@ type PhoneMeta = {
   ok: boolean;
   name: string;
   nonce: string; // challenge sent to this connection
+  commit: string; // hash of the key the phone may enrol with, received before it saw the nonce
   key: string; // offered by a phone that is waiting for approval
+  number: string; // shown on both screens while it waits
   asking: boolean;
   proved: boolean; // one proof attempt per connection
 };
@@ -113,7 +116,7 @@ function startPeer(): void {
 
   p.on('connection', (conn) => {
     conn.on('open', () => {
-      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', key: '', asking: false, proved: false });
+      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', commit: '', key: '', number: '', asking: false, proved: false });
     });
     conn.on('data', (data) => {
       const meta = conns.get(conn);
@@ -274,7 +277,8 @@ function onHello(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, 
     sendState(conn);
     return;
   }
-  if (meta.nonce) return; // one challenge per connection
+  if (meta.nonce || !isHex(msg.commit, 64)) return; // one challenge per connection, only after the phone committed
+  meta.commit = msg.commit;
   meta.name = (typeof msg.name === 'string' ? msg.name.replace(/[^\p{L}\p{N} ]/gu, '').slice(0, 24) : '') || 'Un teléfono';
   meta.nonce = randomHex(16);
   conn.send({ t: 'challenge', host: hostId, nonce: meta.nonce } satisfies HostMsg);
@@ -292,13 +296,17 @@ async function onProve(conn: DataConnection, meta: PhoneMeta, msg: Extract<Remot
 }
 
 /** A phone this computer has never approved: ask the person at the computer. */
-function onEnrol(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, { t: 'enrol' }>): void {
-  if (meta.ok || !meta.nonce || meta.asking || !isHex(msg.key, 64)) return;
-  if (waiting().length >= MAX_WAITING) {
+async function onEnrol(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, { t: 'enrol' }>): Promise<void> {
+  if (meta.ok || !meta.nonce || meta.asking || meta.key || !isHex(msg.key, 64)) return;
+  meta.key = msg.key; // one offer per connection
+  const committed = sameHex(await sha256Hex(msg.key), meta.commit);
+  const number = await pairingNumber(msg.key, meta.nonce, code);
+  if (!conns.has(conn)) return; // gone while we were checking
+  if (!committed || waiting().length >= MAX_WAITING) {
     reject(conn);
     return;
   }
-  meta.key = msg.key;
+  meta.number = number;
   meta.asking = true;
   conn.send({ t: 'auth', state: 'pending' } satisfies HostMsg);
   renderApproval();
@@ -307,7 +315,10 @@ function onEnrol(conn: DataConnection, meta: PhoneMeta, msg: Extract<RemoteMsg, 
 function renderApproval(): void {
   const next = waiting()[0];
   el.approve.hidden = !next;
-  if (next) el.approveName.textContent = next[1].name;
+  if (next) {
+    el.approveName.textContent = next[1].name;
+    el.approveNumber.textContent = next[1].number;
+  }
 }
 
 function decide(allow: boolean): void {
@@ -387,7 +398,7 @@ function handle(conn: DataConnection, msg: RemoteMsg): void {
   if (msg.t === 'ping') conn.send({ t: 'pong', id: msg.id } satisfies HostMsg);
   else if (msg.t === 'hello') onHello(conn, meta, msg);
   else if (msg.t === 'prove') void onProve(conn, meta, msg);
-  else if (msg.t === 'enrol') onEnrol(conn, meta, msg);
+  else if (msg.t === 'enrol') void onEnrol(conn, meta, msg);
   else if (meta.ok) route(msg); // nothing else is obeyed from a phone that was not approved
 }
 

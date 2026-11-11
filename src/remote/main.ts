@@ -2,7 +2,7 @@ import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
 import type { HoldKey, HostMsg, Key, Mode, RemoteMsg } from '../shared/protocol';
 import { AimTracker, OneEuro, motionPermissionPending, requestMotionPermission, type Aim } from './aim';
-import { isHex, keyId, proof, randomHex } from '../shared/auth';
+import { isHex, keyId, pairingNumber, proof, randomHex, sha256Hex } from '../shared/auth';
 import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -144,6 +144,8 @@ function knownHosts(): Record<string, string> {
   }
 }
 let enrolling: { host: string; key: string } | null = null; // offered on this link, kept only if admitted
+let offerKey = ''; // made per link and committed to in `hello`, before the computer's nonce is known
+let pairNumber = '';
 let dialledCode = '';
 
 async function onChallenge(c: DataConnection, host: unknown, nonce: unknown): Promise<void> {
@@ -154,8 +156,9 @@ async function onChallenge(c: DataConnection, host: unknown, nonce: unknown): Pr
   if (key && isHex(key, 64)) {
     reply = { t: 'prove', kid: await keyId(key), mac: await proof(key, nonce, dialledCode) };
   } else {
-    enrolling = { host, key: randomHex(32) };
-    reply = { t: 'enrol', key: enrolling.key };
+    enrolling = { host, key: offerKey };
+    pairNumber = await pairingNumber(offerKey, nonce, dialledCode);
+    reply = { t: 'enrol', key: offerKey };
   }
   if (c === conn && c.open) c.send(reply);
 }
@@ -250,7 +253,11 @@ function dial(): void {
     lastPong = Date.now();
     setStatus('Vinculando…', 'warn');
     enrolling = null;
-    c.send({ t: 'hello', v: 3, name: deviceName } satisfies RemoteMsg);
+    pairNumber = '';
+    offerKey = randomHex(32);
+    void sha256Hex(offerKey).then((commit) => {
+      if (c === conn && c.open) c.send({ t: 'hello', v: 4, name: deviceName, commit } satisfies RemoteMsg);
+    });
   });
   c.on('data', (data) => {
     if (c !== conn) return;
@@ -282,7 +289,7 @@ function onHost(msg: HostMsg): void {
       break;
     case 'auth':
       if (msg.state === 'pending') {
-        setStatus('Aceptá este teléfono en la computadora', 'warn');
+        setStatus(pairNumber ? `Aceptá en la PC si muestra ${pairNumber}` : 'Aceptá este teléfono en la computadora', 'warn');
       } else if (msg.state === 'unknown') {
         // The computer lost its record of this phone, or something answered in its name.
         denied = true;

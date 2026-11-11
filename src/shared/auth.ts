@@ -5,6 +5,11 @@
  * the key never travels again: the phone proves it holds it by signing the computer's one-time nonce
  * together with the pairing code it dialled. A page that impersonates the computer therefore learns
  * nothing reusable, and cannot relay the proof either, because it cannot sit on the real computer's code.
+ *
+ * Approval itself is checked by eye: phone and computer each show a 4-digit number derived from the key,
+ * the computer's nonce and the pairing code. The phone commits to its key (a hash, in `hello`) before it
+ * sees the nonce, so someone sitting in the middle, or a second phone racing to be approved in the
+ * owner's place, cannot steer its own number to match the one on the owner's phone.
  */
 
 const HEX_RE = /^[0-9a-f]+$/;
@@ -31,6 +36,17 @@ async function hmacHex(keyHex: string, text: string): Promise<string> {
 export const keyId = async (keyHex: string) => (await hmacHex(keyHex, 'clickerfex key id')).slice(0, 16);
 
 export const proof = (keyHex: string, nonce: string, code: string) => hmacHex(keyHex, `clickerfex proof|${nonce}|${code}`);
+
+export async function sha256Hex(hex: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', hexBytes(hex)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The number both screens show while a phone waits for approval. */
+export async function pairingNumber(keyHex: string, nonce: string, code: string): Promise<string> {
+  const mac = await hmacHex(keyHex, `clickerfex number|${nonce}|${code}`);
+  return String(parseInt(mac.slice(0, 12), 16) % 10000).padStart(4, '0');
+}
 
 /** Compares without stopping at the first difference. */
 export function sameHex(a: string, b: string): boolean {

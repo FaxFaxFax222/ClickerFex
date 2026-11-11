@@ -1,6 +1,6 @@
 /** Phone -> laptop. Keep messages tiny: they flow at up to 60 Hz. */
 export type RemoteMsg =
-  | { t: 'hello'; v: 3; name?: string }
+  | { t: 'hello'; v: 4; name?: string; commit: string } // commit: SHA-256 of the key this phone would enrol with
   | { t: 'prove'; kid: string; mac: string } // answer to a challenge from a computer that approved this phone before
   | { t: 'enrol'; key: string } // first contact with this computer: a fresh key, kept only if someone approves
   | { t: 'ping'; id: number }

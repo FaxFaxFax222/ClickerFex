@@ -80,6 +80,7 @@ El láser apunta dentro del monitor donde está el cursor en el momento de encen
 ## Seguridad de la vinculación
 
 - **Aprobación**: la primera vez que un teléfono se conecta, la computadora muestra un aviso (*Permitir / Rechazar*). Hasta que se acepta, no se obedece ningún comando suyo. Los teléfonos aceptados se recuerdan en ese navegador y no vuelven a preguntar.
+- **Número de verificación**: el aviso muestra 4 dígitos y el teléfono que espera muestra los suyos. Aceptá solo si coinciden: así no se aprueba por error el teléfono de otra persona que se conectó al mismo tiempo.
 - **Reconocimiento sin enviar secretos**: al aprobarse, el teléfono entrega una clave creada solo para esa computadora. Después no la vuelve a enviar: firma un desafío de un solo uso junto con el código al que se conectó. Una página que se haga pasar por la computadora no obtiene nada reutilizable ni puede retransmitir la firma.
 - **Código por sesión**: el código dura mientras la pestaña esté abierta (recargar lo conserva). Al cerrar la pestaña o el navegador se genera uno nuevo.
 - **Cambiar código**: lo reemplaza al instante; los teléfonos aceptados que estén conectados pasan solos al nuevo.
