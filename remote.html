@@ -21,87 +21,157 @@
       <button type="submit" class="primary">Conectar</button>
     </form>
 
-    <div id="app" class="screen" hidden>
+    <div id="app" class="screen" data-mode="clicker" hidden>
       <header class="bar">
         <span class="status" id="status" data-tone="warn"><span class="dot"></span><span id="status-text">Conectando…</span></span>
         <span class="counter mono" id="counter"></span>
         <button type="button" class="icon-btn" id="kbd-btn" aria-label="Escribir en la computadora" hidden>
-          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v4M9 21h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M3 6h18v12H3zM7 10h.01M11 10h.01M15 10h.01M7 14h10" /></svg>
         </button>
         <button type="button" class="icon-btn" id="menu-btn" aria-label="Ajustes">
-          <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+          <svg viewBox="0 0 24 24"><path d="M4 7h9M19 7h1M4 17h1M11 17h9" /><circle cx="16" cy="7" r="2.5" /><circle cx="8" cy="17" r="2.5" /></svg>
         </button>
+        <div class="seg" role="tablist" aria-label="Modo de control">
+          <button type="button" role="tab" id="mode-clicker" aria-selected="true">Clicker</button>
+          <button type="button" role="tab" id="mode-tour" aria-selected="false">Recorrido</button>
+        </div>
       </header>
 
-      <div id="pad" role="application" aria-label="Touchpad">
-        <span class="pad-hint">Deslizá para mover · tocá para clic<br />dos dedos: desplazar · tocar con dos: clic derecho</span>
+      <div id="clicker" class="view">
+        <div id="pad" role="application" aria-label="Touchpad">
+          <span class="pad-hint">Deslizá para mover · tocá para clic<br />dos dedos: desplazar · tocar con dos: clic derecho</span>
+        </div>
+
+        <button type="button" id="laser-btn" class="laser-btn">
+          <span class="laser-dot"></span><span id="laser-label">Mantené para láser</span>
+        </button>
+
+        <div class="nav">
+          <button type="button" id="prev" class="nav-btn" aria-label="Anterior">
+            <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
+          </button>
+          <button type="button" id="next" class="nav-btn primary" aria-label="Siguiente">
+            <svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
+          </button>
+        </div>
       </div>
 
-      <button type="button" id="laser-btn" class="laser-btn">
-        <span class="laser-dot"></span><span id="laser-label">Mantené para láser</span>
-      </button>
+      <div id="tour" class="view" hidden>
+        <p class="notice" id="tour-notice" hidden></p>
 
-      <div class="nav">
-        <button type="button" id="prev" class="nav-btn" aria-label="Anterior">
-          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
-        </button>
-        <button type="button" id="next" class="nav-btn primary" aria-label="Siguiente">
-          <svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
-        </button>
+        <div class="zoom">
+          <span class="zoom-sign">+</span>
+          <div id="zoom" class="lever" role="slider" aria-label="Zoom" aria-orientation="vertical"><span class="lever-knob"></span></div>
+          <span class="zoom-sign">−</span>
+          <span class="ctl-label">Zoom</span>
+        </div>
+
+        <div class="ctl ctl-look">
+          <div id="look" class="surface stick" role="application" aria-label="Cámara">
+            <span class="knob"></span>
+          </div>
+          <span class="ctl-label">Cámara</span>
+        </div>
+
+        <div class="ctl ctl-walk">
+          <div id="walk" class="surface dpad" role="application" aria-label="Moverse">
+            <svg class="arrow a-up" viewBox="0 0 24 24"><path d="M5 15l7-7 7 7" /></svg>
+            <svg class="arrow a-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
+            <svg class="arrow a-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" /></svg>
+            <svg class="arrow a-down" viewBox="0 0 24 24"><path d="M5 9l7 7 7-7" /></svg>
+          </div>
+          <span class="ctl-label">Moverse</span>
+        </div>
       </div>
     </div>
 
     <dialog id="kbd">
       <div class="sheet">
         <div class="sheet-head">
-          <h2>Escribir en la PC</h2>
+          <h2>Escribir en la computadora</h2>
           <button type="button" class="icon-btn" id="kbd-close" aria-label="Cerrar">
-            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
-        <p class="hint">Hacé clic en un campo de texto de la computadora con el touchpad y después dictá o escribí.</p>
-        <button type="button" id="mic" class="mic">
-          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-          <span id="mic-label">Tocá para dictar</span>
-        </button>
-        <p class="caption" id="mic-caption" aria-live="polite"></p>
-        <label class="field">
-          <span>O escribí con el teclado del teléfono</span>
-          <textarea id="kbd-text" rows="2" placeholder="Texto…" enterkeyhint="send"></textarea>
-        </label>
-        <div class="keys">
-          <button type="button" class="key" data-key="backspace" aria-label="Borrar">
-            <svg viewBox="0 0 24 24"><path d="M9 5h11v14H9l-6-7zM12 9l5 6M17 9l-5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>
+        <p class="hint">Primero hacé clic en un campo de texto de la computadora.</p>
+
+        <section class="group">
+          <h3>Dictar</h3>
+          <button type="button" id="mic" class="mic">
+            <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM6 11a6 6 0 0 0 12 0M12 17v4" /></svg>
+            <span id="mic-label">Tocá para dictar</span>
           </button>
-          <button type="button" class="key" data-key="tab">Tab</button>
-          <button type="button" class="key" data-key="enter">Enter</button>
-          <button type="button" class="key primary" id="kbd-send">Enviar</button>
-        </div>
+          <p class="caption" id="mic-caption" aria-live="polite"></p>
+        </section>
+
+        <section class="group">
+          <h3><label for="kbd-text">Escribir</label></h3>
+          <div class="compose">
+            <textarea id="kbd-text" rows="2" placeholder="Texto…" enterkeyhint="send"></textarea>
+            <button type="button" class="send" id="kbd-send" aria-label="Enviar texto">
+              <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            </button>
+          </div>
+        </section>
+
+        <section class="group">
+          <h3>Teclas</h3>
+          <div class="keys">
+            <button type="button" class="key" data-key="backspace" data-repeat aria-label="Borrar (mantené para borrar seguido)">
+              <svg viewBox="0 0 24 24"><path d="M9 5h11v14H9l-6-7zM12 9l5 6M17 9l-5 6" /></svg>
+              <small>Mantené</small>
+            </button>
+            <button type="button" class="key" data-key="tab">Tab</button>
+            <button type="button" class="key" data-key="enter">Enter</button>
+          </div>
+        </section>
       </div>
     </dialog>
 
     <dialog id="menu">
-      <form method="dialog" class="sheet">
-        <h2>Ajustes</h2>
-        <label class="field">
-          <span>Velocidad del touchpad <output id="pad-out"></output></span>
-          <input type="range" id="pad-sens" min="0.5" max="3" step="0.1" />
-        </label>
-        <label class="field">
-          <span>Ancho de la pantalla vista desde vos <output id="laser-out"></output></span>
-          <input type="range" id="laser-sens" min="12" max="70" step="1" />
-          <small class="hint">Ángulo que hay que girar la mano para cruzar la pantalla de lado a lado. Lejos de la pantalla: menos grados.</small>
-        </label>
-        <label class="check">
-          <input type="checkbox" id="laser-toggle" />
-          <span>Láser con un toque (encender/apagar) en lugar de mantener</span>
-        </label>
-        <p class="hint" id="menu-code"></p>
-        <div class="sheet-actions">
-          <button type="button" id="disconnect" class="ghost">Cambiar computadora</button>
-          <button type="submit" class="primary">Listo</button>
+      <div class="sheet">
+        <div class="sheet-head">
+          <h2>Ajustes</h2>
+          <button type="button" class="icon-btn" id="menu-close" aria-label="Cerrar">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
         </div>
-      </form>
+
+        <section class="group">
+          <h3>Touchpad</h3>
+          <label class="field">
+            <span>Velocidad <output id="pad-out"></output></span>
+            <input type="range" id="pad-sens" min="0.5" max="3" step="0.1" />
+          </label>
+        </section>
+
+        <section class="group">
+          <h3>Láser</h3>
+          <label class="field">
+            <span>Ancho de la pantalla <output id="laser-out"></output></span>
+            <input type="range" id="laser-sens" min="12" max="70" step="1" />
+            <small class="hint">Cuánto girás la mano para cruzarla de lado a lado. Más lejos de la pantalla: menos grados.</small>
+          </label>
+          <label class="check">
+            <span>Encender y apagar con un toque</span>
+            <input type="checkbox" id="laser-toggle" />
+          </label>
+        </section>
+
+        <section class="group">
+          <h3>Recorrido</h3>
+          <label class="check">
+            <span>Cámara a la derecha, movimiento a la izquierda</span>
+            <input type="checkbox" id="tour-swap" />
+          </label>
+        </section>
+
+        <section class="group">
+          <h3>Conexión</h3>
+          <p class="hint" id="menu-code"></p>
+          <button type="button" id="disconnect" class="ghost">Cambiar computadora</button>
+        </section>
+      </div>
     </dialog>
 
     <script type="module" src="/src/remote/main.ts"></script>

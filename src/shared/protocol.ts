@@ -6,18 +6,22 @@ export type RemoteMsg =
   | { t: 'click'; b: 'left' | 'right' }
   | { t: 'scroll'; dy: number }
   | { t: 'key'; k: Key }
+  | { t: 'hold'; k: HoldKey; on: boolean } // tour mode: key kept down; re-sent while held
   | { t: 'text'; s: string } // typed on the computer (system mode)
   | { t: 'laser'; on: boolean }
   | { t: 'lpos'; x: number; y: number }; // laser, absolute 0..1 (phone maps pointing angle to screen)
 
 export type Key = 'next' | 'prev' | 'enter' | 'backspace' | 'tab';
 
+/** Matterport-style walkthrough keys: WASD walks, IJKL turns the camera. */
+export type HoldKey = 'w' | 'a' | 's' | 'd' | 'i' | 'j' | 'k' | 'l';
+
 export type Mode = 'idle' | 'pdf' | 'agent';
 
 /** Laptop -> phone. */
 export type HostMsg =
   | { t: 'pong'; id: number }
-  | { t: 'state'; mode: Mode; page: number; total: number; aspect: number };
+  | { t: 'state'; mode: Mode; page: number; total: number; aspect: number; tour?: boolean }; // tour: agent can hold keys
 
 /** Laptop browser -> desktop agent (ws://localhost). */
 export type AgentMsg =
@@ -25,6 +29,7 @@ export type AgentMsg =
   | { t: 'click'; b: 'left' | 'right' }
   | { t: 'scroll'; dy: number }
   | { t: 'key'; k: Key }
+  | { t: 'hold'; k: HoldKey; on: boolean }
   | { t: 'text'; s: string }
   | { t: 'laser'; on: boolean }
   | { t: 'lpos'; x: number; y: number }; // absolute, 0..1

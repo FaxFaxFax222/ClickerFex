@@ -23,6 +23,7 @@ import platform
 import re
 import sys
 import threading
+import time
 from typing import Callable
 
 try:
@@ -43,6 +44,10 @@ DEFAULT_ORIGINS = [
 ]
 
 KEYS = {"next": Key.right, "prev": Key.left, "enter": Key.enter, "backspace": Key.backspace, "tab": Key.tab}
+# Tour mode (3D walkthroughs such as Matterport): WASD walks, IJKL turns the camera.
+HOLD_KEYS = frozenset("wasdijkl")
+HOLD_TIMEOUT = 1.0  # the phone re-sends held keys ~8x/s; silence means it is gone
+AGENT_VERSION = 2  # 2: held keys
 SCROLL_PX_PER_NOTCH = 40
 MAX_TEXT = 4000
 
@@ -355,6 +360,27 @@ class Injector:
         self.visual = visual
         self.ui = ui  # runs visual calls on the GUI thread (macOS) or inline
         self.laser_on = False
+        self.held: dict[str, float] = {}  # key -> last time the phone confirmed it
+
+    def hold(self, key: str, on: bool) -> None:
+        if key not in HOLD_KEYS:
+            return
+        if on:
+            # Pressing again while down is what a physical keyboard's auto-repeat does.
+            self.keyboard.press(key)
+            self.held[key] = time.monotonic()
+        elif self.held.pop(key, None) is not None:
+            self.keyboard.release(key)
+
+    def release_stale(self, max_age: float = HOLD_TIMEOUT) -> None:
+        """Never leave a key stuck down: lets go of keys the phone stopped confirming."""
+        now = time.monotonic()
+        for key in [k for k, seen in self.held.items() if now - seen >= max_age]:
+            del self.held[key]
+            try:
+                self.keyboard.release(key)
+            except Exception as e:
+                print(f"  aviso: no se pudo soltar la tecla {key} ({e})")
 
     def _visual(self, fn: Callable[..., None], *args) -> None:
         def safe() -> None:
@@ -395,6 +421,8 @@ class Injector:
             key = KEYS.get(msg.get("k"))
             if key is not None:
                 self.keyboard.tap(key)
+        elif t == "hold":
+            self.hold(str(msg.get("k")), bool(msg.get("on")))
         elif t == "text":
             text = str(msg.get("s", ""))[:MAX_TEXT]
             if text:
@@ -469,6 +497,7 @@ def main() -> None:
     async def handler(ws: ServerConnection) -> None:
         print(f"  conectado: {ws.request.headers.get('Origin')}")
         try:
+            await ws.send(json.dumps({"t": "hello", "v": AGENT_VERSION}))
             async for raw in ws:
                 try:
                     injector.handle(json.loads(raw))
@@ -478,11 +507,18 @@ def main() -> None:
             pass  # tab closed or laptop slept: normal
         finally:
             injector.set_laser(False)  # never leave the red dot stuck on screen
+            injector.release_stale(0)
             print("  desconectado")
 
+    async def watchdog() -> None:
+        while True:
+            await asyncio.sleep(0.25)
+            injector.release_stale()
+
     async def run() -> None:
+        guard = asyncio.create_task(watchdog())  # noqa: F841 - keeps the task referenced
         async with serve(handler, "localhost", args.port, process_request=check_origin, max_size=65536):
-            print(f"ClickerFex agente activo en ws://localhost:{args.port}  (pantalla {w}x{h}, láser: {visual.name})")
+            print(f"ClickerFex agente activo en ws://localhost:{args.port}  (v{AGENT_VERSION}, pantalla {w}x{h}, láser: {visual.name})")
             print("En la web de ClickerFex, en esta computadora, tocá 'Conectar agente'. Ctrl+C para salir.")
             if SYSTEM == "Darwin":
                 print("macOS: dale permiso de Accesibilidad a tu Terminal (Ajustes > Privacidad y seguridad).")
@@ -508,6 +544,7 @@ def main() -> None:
         pass
     finally:
         visual.hide()
+        injector.release_stale(0)
 
 
 if __name__ == "__main__":

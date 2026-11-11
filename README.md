@@ -55,6 +55,20 @@ Después, en la web abierta en esa misma computadora: **Conectar agente** (Chrom
 - **Escribir y dictar** (botón de micrófono, solo en modo sistema): hacé clic en un campo de texto con el touchpad y dictá con el micrófono del teléfono; cada frase se escribe en la computadora. También hay un campo para escribir con el teclado del teléfono, y teclas Borrar / Tab / Enter. El dictado usa el reconocimiento de voz de Chrome (requiere internet).
 - Seguridad: el agente solo acepta conexiones desde `https://clickerfex.vercel.app` y `localhost`. Si usás otro dominio: `python clickerfex_agent.py --origin "https://tu-dominio\.com"`.
 
+## Modo Recorrido (Matterport y otros recorridos 3D)
+
+En el teléfono, el selector **Clicker / Recorrido** cambia el control a un joystick. Requiere el modo sistema (agente v2 o posterior).
+
+| Control | Acción | Tecla que mantiene el agente |
+|---|---|---|
+| Cruz de flechas | Caminar adelante / atrás / costados | `W` `S` `A` `D` |
+| Joystick | Girar la cámara | `I` `K` `J` `L` |
+| Palanca | Zoom (vuelve sola al centro) | rueda del mouse |
+
+- Antes de empezar, hacé un clic dentro del recorrido con el touchpad: las teclas van a la ventana con foco y el zoom actúa donde está el cursor.
+- Las diagonales mantienen dos teclas a la vez.
+- Seguridad: el teléfono reconfirma las teclas mantenidas ~8 veces por segundo; si deja de hacerlo (pantalla apagada, sin señal), el agente las suelta en 1 s.
+
 ## Arquitectura
 
 ```

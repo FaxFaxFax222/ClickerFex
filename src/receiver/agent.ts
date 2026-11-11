@@ -11,6 +11,8 @@ type Listener = (connected: boolean) => void;
  */
 export class AgentBridge {
   connected = false;
+  /** Protocol version announced by the agent; 0 = an old build that announces nothing. */
+  version = 0;
   private ws: WebSocket | null = null;
   private wanted = false;
   private retry: number | undefined;
@@ -49,8 +51,20 @@ export class AgentBridge {
     }
     this.ws = ws;
     ws.onopen = () => this.set(true);
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(String(e.data)) as { t?: string; v?: number };
+        if (msg.t === 'hello' && typeof msg.v === 'number') {
+          this.version = msg.v;
+          this.onChange(this.connected);
+        }
+      } catch {
+        /* not ours */
+      }
+    };
     ws.onclose = () => {
       this.ws = null;
+      this.version = 0;
       this.set(false);
       this.schedule();
     };
