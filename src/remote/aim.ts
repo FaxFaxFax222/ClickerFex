@@ -14,6 +14,30 @@ interface OrientationSensorLike extends EventTarget {
 }
 type OrientationSensorCtor = new (opts: { frequency: number; referenceFrame?: 'device' | 'screen' }) => OrientationSensorLike;
 
+type PermissionApi = { requestPermission?: () => Promise<'granted' | 'denied' | 'prompt'> };
+let motionGranted = false;
+
+const orientationApi = () => window.DeviceOrientationEvent as unknown as PermissionApi | undefined;
+
+/**
+ * iOS: orientation events stay silent until the user grants "Motion & Orientation" access, and the
+ * prompt may only be requested from a completed tap (touchend/click), not from pointerdown.
+ */
+export function motionPermissionPending(): boolean {
+  if (motionGranted || 'RelativeOrientationSensor' in window) return false; // Android/Chrome use the sensor path
+  return typeof orientationApi()?.requestPermission === 'function';
+}
+
+/** Call synchronously from a touchend/click handler. */
+export function requestMotionPermission(): Promise<boolean> {
+  const api = orientationApi();
+  if (!api?.requestPermission) return Promise.resolve(true);
+  return api
+    .requestPermission()
+    .then((state) => (motionGranted = state === 'granted'))
+    .catch(() => false);
+}
+
 /** Device +Y axis expressed in world coordinates (X east, Y north, Z up). */
 function aimFromVector(px: number, py: number, pz: number): Aim {
   return { yaw: Math.atan2(-px, py), pitch: Math.asin(Math.max(-1, Math.min(1, pz))) };
@@ -91,9 +115,9 @@ export class AimTracker {
 
   /** Fallback: deviceorientation Euler angles (Z-X'-Y''). Pointing vector = Rz(α)·Rx(β)·(0,1,0); γ (roll) drops out. */
   private async tryEvent(): Promise<boolean> {
-    const DOE = window.DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> } | undefined;
+    const DOE = orientationApi();
     if (!DOE) return false;
-    if (typeof DOE.requestPermission === 'function') {
+    if (typeof DOE.requestPermission === 'function' && !motionGranted) {
       try {
         if ((await DOE.requestPermission()) === 'denied') return false;
       } catch {

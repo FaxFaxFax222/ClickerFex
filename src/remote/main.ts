@@ -1,7 +1,7 @@
 import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
 import type { HostMsg, Key, RemoteMsg } from '../shared/protocol';
-import { AimTracker, OneEuro, type Aim } from './aim';
+import { AimTracker, OneEuro, motionPermissionPending, requestMotionPermission, type Aim } from './aim';
 import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -342,9 +342,17 @@ function setLaser(on: boolean): void {
   }
 }
 
+let permissionTap = false;
+
 el.laserBtn.addEventListener('pointerdown', async (e) => {
   e.preventDefault();
   capture(el.laserBtn, e.pointerId);
+  if (motionPermissionPending()) {
+    // iOS: the permission prompt can only open when the finger lifts (handled below).
+    permissionTap = true;
+    el.laserLabel.textContent = 'Soltá para habilitar el sensor';
+    return;
+  }
   const wantOn = settings.laserToggle ? !laserOn : true;
   if (wantOn && !(await tracker.start())) {
     el.laserLabel.textContent = 'Sin sensor de orientación';
@@ -358,6 +366,18 @@ const laserUp = () => {
 el.laserBtn.addEventListener('pointerup', laserUp);
 el.laserBtn.addEventListener('pointercancel', laserUp);
 el.laserBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+
+const askMotionPermission = () => {
+  if (!permissionTap) return;
+  permissionTap = false;
+  void requestMotionPermission().then((granted) => {
+    el.laserLabel.textContent = granted
+      ? 'Listo: mantené para láser'
+      : 'Permiso denegado: cerrá Safari del todo y volvé a abrir la página';
+  });
+};
+el.laserBtn.addEventListener('touchend', askMotionPermission);
+el.laserBtn.addEventListener('click', askMotionPermission);
 
 // ---------------------------------------------------------------- send loop (one batch per frame)
 
