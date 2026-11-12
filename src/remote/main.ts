@@ -180,6 +180,7 @@ const deviceName = /iPhone/.test(ua) ? 'Un iPhone' : /iPad/.test(ua) ? 'Un iPad'
 let hostMode: Mode = 'idle';
 let hostTour = false; // the desktop agent is recent enough to hold keys
 let hostDrag = false; // ...and to hold the mouse button
+let hostGestures = false; // the desktop agent knows the app switcher
 
 function setStatus(text: string, tone: 'ok' | 'warn' | 'err'): void {
   el.status.dataset.tone = tone;
@@ -326,6 +327,8 @@ function onHost(msg: HostMsg): void {
       hostTour = msg.tour === true;
       hostDrag = msg.drag === true;
       if (dragging && (msg.mode !== 'agent' || !hostDrag)) endDrag();
+      hostGestures = msg.gestures === true;
+      if (!hostGestures || msg.mode !== 'agent') closeSwitcher();
       renderTourNotice();
       el.counter.textContent = msg.mode === 'pdf' ? `${msg.page} / ${msg.total}` : '';
       // Typing/dictation needs the desktop agent: only offered in system mode.
@@ -386,7 +389,8 @@ bindNav(el.prev, 'prev');
 
 type Touch = { x: number; y: number; t: number };
 const touches = new Map<number, Touch>();
-let gesture = { start: 0, maxFingers: 0, travel: 0 };
+// three: a 3-finger gesture took over; pointer and scroll stay still until every finger lifts.
+let gesture = { start: 0, maxFingers: 0, travel: 0, three: false };
 const acc = { mx: 0, my: 0, scroll: 0 };
 
 // Drag: one finger held still for DRAG_HOLD_MS presses the left button; moving drags; lifting drops.
@@ -434,11 +438,59 @@ function flashPad(text: string): void {
   flashTimer = window.setTimeout(() => el.pad.classList.remove('flash'), 1800);
 }
 
+// ---- 3-finger swipe: app switcher, as on a Windows touchpad.
+// Moving opens it (Alt+Tab), every further STEP px moves the highlight, lifting picks the app.
+const SWITCH_OPEN_PX = 28;
+const SWITCH_STEP_PX = 70;
+const SWITCH_KEEP_MS = 300;
+const swipe = { x: 0, y: 0, open: false, keep: 0, warned: false };
+
+function openSwitcher(): void {
+  swipe.open = true;
+  swipe.x = swipe.y = 0; // steps count from where it opened
+  send({ t: 'switcher', a: 'open' });
+  swipe.keep = window.setInterval(() => send({ t: 'switcher', a: 'keep' }), SWITCH_KEEP_MS);
+  haptic(15);
+}
+
+function closeSwitcher(): void {
+  if (!swipe.open) return;
+  swipe.open = false;
+  clearInterval(swipe.keep);
+  send({ t: 'switcher', a: 'close' });
+}
+
+function trackSwipe(dx: number, dy: number): void {
+  swipe.x += dx;
+  swipe.y += dy;
+  if (!swipe.open) {
+    if (Math.hypot(swipe.x, swipe.y) < SWITCH_OPEN_PX) return;
+    if (!hostGestures || hostMode !== 'agent') {
+      if (swipe.warned) return;
+      swipe.warned = true;
+      haptic(40);
+      setStatus(hostMode !== 'agent' ? 'Gestos: solo en modo sistema' : 'Gestos: actualizá el agente de la computadora', 'warn');
+      return;
+    }
+    openSwitcher();
+    return;
+  }
+  // One axis at a time, so a slightly diagonal swipe doesn't also jump rows.
+  const horizontal = Math.abs(swipe.x) >= Math.abs(swipe.y);
+  const along = horizontal ? swipe.x : swipe.y;
+  if (Math.abs(along) < SWITCH_STEP_PX) return;
+  const a = horizontal ? (along > 0 ? 'right' : 'left') : along > 0 ? 'down' : 'up';
+  send({ t: 'switcher', a });
+  haptic(6);
+  if (horizontal) swipe.x -= Math.sign(along) * SWITCH_STEP_PX;
+  else swipe.y -= Math.sign(along) * SWITCH_STEP_PX;
+}
+
 el.pad.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   capture(el.pad, e.pointerId);
   if (touches.size === 0) {
-    gesture = { start: performance.now(), maxFingers: 0, travel: 0 };
+    gesture = { start: performance.now(), maxFingers: 0, travel: 0, three: false };
     regrab = dragging;
     if (dragging) {
       clearTimeout(graceTimer);
@@ -451,6 +503,12 @@ el.pad.addEventListener('pointerdown', (e) => {
   }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
   gesture.maxFingers = Math.max(gesture.maxFingers, touches.size);
+  if (touches.size >= 3 && !gesture.three) {
+    gesture.three = true;
+    swipe.x = swipe.y = 0;
+    swipe.warned = false;
+    acc.mx = acc.my = acc.scroll = 0; // drop what the first fingers started
+  }
   el.pad.classList.add('active');
 });
 
@@ -465,7 +523,9 @@ el.pad.addEventListener('pointermove', (e) => {
   gesture.travel += Math.hypot(dx, dy);
   if (gesture.travel > DRAG_SLOP_PX) clearTimeout(holdTimer);
 
-  if (touches.size === 1) {
+  if (gesture.three) {
+    if (touches.size >= 3) trackSwipe(dx / touches.size, dy / touches.size); // each finger reports; average
+  } else if (touches.size === 1) {
     // Pointer acceleration: slow moves stay precise, fast flicks cross the screen.
     const speed = Math.hypot(dx, dy) / dt; // px per ms
     const gain = settings.pad * (1 + Math.min(speed * 1.6, 3));
@@ -478,6 +538,7 @@ el.pad.addEventListener('pointermove', (e) => {
 
 function endTouch(e: PointerEvent): void {
   if (!touches.delete(e.pointerId)) return;
+  if (touches.size < 3) closeSwitcher(); // the first finger to lift picks the app, like Windows
   if (touches.size > 0) return;
   clearTimeout(holdTimer);
   el.pad.classList.remove('active');
@@ -500,6 +561,9 @@ function endTouch(e: PointerEvent): void {
   }
 }
 el.pad.addEventListener('pointerup', endTouch);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) closeSwitcher(); // never leave Alt down on the computer
+});
 el.pad.addEventListener('pointercancel', endTouch);
 
 // ---------------------------------------------------------------- laser (absolute pointing)
