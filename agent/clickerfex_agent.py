@@ -7,7 +7,7 @@ mouse and keyboard input, so the phone controls PowerPoint, Keynote, Google Slid
     pip install -r requirements.txt
     python clickerfex_agent.py
 
-Listens only on localhost:8765 and only accepts the ClickerFex web origins, so other
+Listens only on localhost:8765 and only accepts the ClickerFex web origin, so other
 websites you visit cannot drive your mouse.
 """
 
@@ -38,10 +38,9 @@ except ImportError as e:
 SYSTEM = platform.system()
 
 # Exact production domain only: any "clickerfex-*.vercel.app" could be registered by someone else.
-DEFAULT_ORIGINS = [
-    r"https://clickerfex\.vercel\.app",
-    r"http://(localhost|127\.0\.0\.1)(:\d+)?",
-]
+DEFAULT_ORIGINS = [r"https://clickerfex\.vercel\.app"]
+# Only with --dev: otherwise any program serving a page on this computer's localhost could drive the mouse.
+DEV_ORIGINS = [r"http://(localhost|127\.0\.0\.1)(:\d+)?"]
 
 KEYS = {"next": Key.right, "prev": Key.left, "enter": Key.enter, "backspace": Key.backspace, "tab": Key.tab}
 # Tour mode (3D walkthroughs such as Matterport): WASD walks, IJKL turns the camera.
@@ -575,6 +574,7 @@ def main() -> None:
         default=[],
         help="Origen web adicional permitido (regex), p. ej. https://mi-dominio\\.com",
     )
+    ap.add_argument("--dev", action="store_true", help="Aceptar también páginas servidas en localhost (desarrollo)")
     ap.add_argument("--screen", help="Forzar el láser a la pantalla principal con este tamaño, p. ej. 2560x1440")
     ap.add_argument("--no-dot", action="store_true", help="Láser con el cursor normal, sin punto rojo")
     ap.add_argument("--selftest", action="store_true", help=argparse.SUPPRESS)
@@ -609,7 +609,7 @@ def main() -> None:
             selftest(injector)
         return
 
-    allowed = [re.compile(f"^{p}$") for p in DEFAULT_ORIGINS + args.origin]
+    allowed = [re.compile(f"^{p}$") for p in DEFAULT_ORIGINS + (DEV_ORIGINS if args.dev else []) + args.origin]
 
     def check_origin(conn: ServerConnection, request: Request) -> Response | None:
         origin = request.headers.get("Origin", "")
@@ -625,7 +625,7 @@ def main() -> None:
             async for raw in ws:
                 try:
                     injector.handle(json.loads(raw))
-                except (ValueError, KeyError, TypeError):
+                except (ValueError, KeyError, TypeError, OverflowError):
                     continue
         except ConnectionClosed:
             pass  # tab closed or laptop slept: normal
@@ -641,7 +641,7 @@ def main() -> None:
 
     async def run() -> None:
         guard = asyncio.create_task(watchdog())  # noqa: F841 - keeps the task referenced
-        async with serve(handler, "localhost", args.port, process_request=check_origin, max_size=65536):
+        async with serve(handler, "localhost", args.port, process_request=check_origin, max_size=65536, compression=None):
             print(f"ClickerFex agente activo en ws://localhost:{args.port}  (v{AGENT_VERSION}, pantalla {w}x{h}, láser: {visual.name})")
             print("En la web de ClickerFex, en esta computadora, tocá 'Conectar agente'. Ctrl+C para salir.")
             if SYSTEM == "Darwin":

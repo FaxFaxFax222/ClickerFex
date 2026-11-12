@@ -55,7 +55,8 @@ Después, en la web abierta en esa misma computadora: **Conectar agente** (Chrom
 
 - Láser en modo sistema: mientras mantenés el botón, el puntero se convierte en un punto rojo visible sobre cualquier app (también PowerPoint/Keynote en pantalla completa); al soltar vuelve el cursor normal. Windows reemplaza el cursor del sistema; macOS dibuja el punto en una capa transparente y oculta el cursor. `--no-dot` lo desactiva.
 - **Escribir y dictar** (botón de micrófono, solo en modo sistema): hacé clic en un campo de texto con el touchpad y dictá con el micrófono del teléfono; cada frase se escribe en la computadora. También hay un campo para escribir con el teclado del teléfono, y teclas Borrar / Tab / Enter. El dictado usa el reconocimiento de voz de Chrome (requiere internet).
-- Seguridad: el agente solo acepta conexiones desde `https://clickerfex.vercel.app` y `localhost`. Si usás otro dominio: `python clickerfex_agent.py --origin "https://tu-dominio\.com"`.
+- Seguridad: el agente solo acepta conexiones desde `https://clickerfex.vercel.app`. Si usás otro dominio: `python clickerfex_agent.py --origin "https://tu-dominio\.com"`. Para desarrollo local (`npm run dev`): `python clickerfex_agent.py --dev`, que además acepta páginas servidas en `localhost`.
+- Segundo plano: con el agente conectado, la pestaña mantiene abierto un flujo de audio inaudible para que Chrome no le baje la prioridad cuando queda detrás de otra pestaña o de PowerPoint. El teléfono muestra la demora de ida y vuelta (`Conectado · 12 ms`); si aparece `vía servidor externo`, la red no deja que teléfono y computadora se hablen directo.
 
 ## Modo Recorrido (Matterport y otros recorridos 3D)
 
@@ -119,4 +120,4 @@ npm run dev
 npm run build
 ```
 
-Deploy: importar el repo en Vercel (framework Vite, sin configuración extra).
+Deploy: importar el repo en Vercel (framework Vite, sin configuración extra). `vercel.json` fija una Content-Security-Policy: si cambiás el broker (`VITE_PEER_HOST`) o el puerto del agente, agregá ese origen a `connect-src`.

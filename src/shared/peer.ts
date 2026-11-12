@@ -1,4 +1,4 @@
-import type { PeerOptions } from 'peerjs';
+import type { DataConnection, PeerOptions } from 'peerjs';
 
 /** Namespace on the shared PeerJS broker. Bump if the protocol breaks. */
 export const PEER_PREFIX = 'clickerfex-v1-';
@@ -82,4 +82,18 @@ export function keepAwake(): () => void {
     void lock?.release();
     lock = null;
   };
+}
+
+/**
+ * Second data channel on the same link, for pointer motion only. The main channel is ordered and
+ * retransmits, so one lost Wi-Fi packet holds back everything behind it and the cursor stutters.
+ * This one delivers whatever arrives, at once: a lost movement is replaced by the next one 16 ms later.
+ * Both ends declare it with the same id, so nothing extra is negotiated.
+ */
+export function motionChannel(conn: DataConnection): RTCDataChannel | null {
+  try {
+    return conn.peerConnection.createDataChannel('cfx-motion', { negotiated: true, id: 100, ordered: false, maxRetransmits: 0 });
+  } catch {
+    return null; // the link works without it, on the main channel
+  }
 }

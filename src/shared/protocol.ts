@@ -13,7 +13,7 @@ export type RemoteMsg =
   | { t: 'text'; s: string } // typed on the computer (system mode)
   | { t: 'switcher'; a: SwitchAction } // 3-finger swipe: app switcher (Alt+Tab / Cmd+Tab)
   | { t: 'laser'; on: boolean }
-  | { t: 'lpos'; x: number; y: number }; // laser, absolute 0..1 (phone maps pointing angle to screen)
+  | { t: 'lpos'; x: number; y: number; n?: number }; // laser, absolute 0..1; n: send order, so a late one is dropped
 
 export type Key = 'next' | 'prev' | 'enter' | 'backspace' | 'tab';
 
@@ -32,7 +32,10 @@ export type HostMsg =
   | { t: 'challenge'; host: string; nonce: string } // host: the computer's public id; nonce: one per connection
   | { t: 'auth'; state: 'pending' | 'denied' | 'unknown' } // nothing but ping is obeyed until the computer approves the phone
   | { t: 'code'; code: string } // the computer changed its pairing code: follow it
-  | { t: 'state'; mode: Mode; page: number; total: number; aspect: number; tour?: boolean; gestures?: boolean; drag?: boolean }; // tour: agent can hold keys; gestures: app switcher; drag: agent can hold the mouse button
+  | { t: 'state'; mode: Mode; page: number; total: number; aspect: number; tour?: boolean; gestures?: boolean; drag?: boolean; fast?: boolean }; // tour: agent can hold keys; gestures: app switcher; drag: agent can hold the mouse button; fast: motion channel listened to
+
+/** Pointer motion: sent many times a second, each one replaced by the next. */
+export type MotionMsg = Extract<RemoteMsg, { t: 'move' | 'scroll' | 'lpos' }>;
 
 /** Laptop browser -> desktop agent (ws://localhost). */
 export type AgentMsg =

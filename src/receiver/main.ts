@@ -3,9 +3,10 @@ import Peer, { type DataConnection } from 'peerjs';
 import QRCode from 'qrcode';
 import { AgentBridge } from './agent';
 import { PdfDeck } from './pdf';
-import type { HostMsg, Mode, RemoteMsg } from '../shared/protocol';
+import { KeepAwakeInBackground } from './background';
+import type { HostMsg, Mode, MotionMsg, RemoteMsg } from '../shared/protocol';
 import { isHex, keyId, pairingNumber, proof, randomHex, sameHex, sha256Hex } from '../shared/auth';
-import { keepAwake, newCode, normalizeCode, peerId, peerOptions, remoteUrl, store } from '../shared/peer';
+import { keepAwake, motionChannel, newCode, normalizeCode, peerId, peerOptions, remoteUrl, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -90,6 +91,7 @@ type PhoneMeta = {
   asking: boolean;
   askedAt: number;
   proved: boolean; // one proof attempt per connection
+  lposSeq: number; // newest laser position applied
 };
 const conns = new Map<DataConnection, PhoneMeta>();
 
@@ -117,7 +119,8 @@ function startPeer(): void {
 
   p.on('connection', (conn) => {
     conn.on('open', () => {
-      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', commit: '', key: '', number: '', asking: false, askedAt: 0, proved: false });
+      conns.set(conn, { lastSeen: Date.now(), ok: false, name: '', nonce: '', commit: '', key: '', number: '', asking: false, askedAt: 0, proved: false, lposSeq: -1 });
+      listenMotion(conn);
     });
     conn.on('data', (data) => {
       const meta = conns.get(conn);
@@ -207,6 +210,7 @@ function stateMsg(): HostMsg {
     total: deck.total,
     aspect: window.innerWidth / window.innerHeight,
     tour: agent.version >= 2,
+    fast: true,
     gestures: agent.version >= 4,
     drag: agent.version >= 5,
   };
@@ -425,6 +429,35 @@ function handle(conn: DataConnection, msg: RemoteMsg): void {
   else if (meta.ok) route(msg); // nothing else is obeyed from a phone that was not approved
 }
 
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** Pointer motion on its own channel (see motionChannel). Same rule as everywhere: only from an approved phone. */
+function listenMotion(conn: DataConnection): void {
+  const ch = motionChannel(conn);
+  if (!ch) return;
+  ch.onmessage = (e) => {
+    const meta = conns.get(conn);
+    if (!meta?.ok || typeof e.data !== 'string') return;
+    meta.lastSeen = Date.now();
+    let msg: MotionMsg;
+    try {
+      msg = JSON.parse(e.data) as MotionMsg;
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.t === 'move') {
+      if (finite(msg.dx) && finite(msg.dy)) route({ t: 'move', dx: msg.dx, dy: msg.dy });
+    } else if (msg.t === 'scroll') {
+      if (finite(msg.dy)) route({ t: 'scroll', dy: msg.dy });
+    } else if (msg.t === 'lpos') {
+      if (!finite(msg.x) || !finite(msg.y) || !finite(msg.n) || msg.n <= meta.lposSeq) return; // arrived after a newer one
+      meta.lposSeq = msg.n;
+      route({ t: 'lpos', x: msg.x, y: msg.y });
+    }
+  };
+}
+
 function route(msg: Exclude<RemoteMsg, { t: 'hello' | 'ping' | 'prove' | 'enrol' }>): void {
   const mode = currentMode();
   const toAgent = mode === 'agent';
@@ -632,6 +665,7 @@ window.addEventListener('keydown', (e) => {
 
 const AGENT_KEY = 'cfx.agent';
 let agentWasConnected = false;
+const background = new KeepAwakeInBackground();
 const agent = new AgentBridge((connected) => {
   renderAgent();
   if (connected && !agentWasConnected) toast('Agente conectado: el teléfono controla esta computadora');
@@ -655,9 +689,11 @@ function renderAgent(): void {
 el.agentBtn.addEventListener('click', () => {
   if (agent.enabled) {
     agent.disable();
+    background.stop();
     store.set(AGENT_KEY, null);
   } else {
     agent.enable();
+    background.start();
     store.set(AGENT_KEY, '1');
   }
   renderAgent();
@@ -677,6 +713,9 @@ void showCode();
 startPeer();
 renderDevices();
 renderTrusted();
-if (store.get(AGENT_KEY) === '1') agent.enable();
+if (store.get(AGENT_KEY) === '1') {
+  agent.enable();
+  background.start();
+}
 renderAgent();
 window.addEventListener('beforeunload', () => peer?.destroy());
