@@ -132,7 +132,16 @@ button { appearance: none; border: 0; background: none; cursor: pointer; }
 #pad.active { border-color: #3a3a42; }
 #pad.tap { background-color: var(--surface-2); }
 .pad-hint { color: #55555d; font-size: 13px; text-align: center; line-height: 1.6; pointer-events: none; }
-#pad.active .pad-hint { opacity: 0; }
+#pad.active .pad-hint, #pad.dragging .pad-hint, #pad.flash .pad-hint { opacity: 0; }
+#pad > * { grid-area: 1 / 1; }
+.pad-drag, .pad-flash { opacity: 0; font-size: 13px; font-weight: 500; pointer-events: none; transition: opacity 120ms; }
+.pad-drag { color: var(--text); letter-spacing: 0.04em; }
+.pad-flash { color: var(--warn); }
+#pad.dragging { border-color: var(--text); background-color: var(--surface-2); }
+#pad.dragging .pad-drag { opacity: 1; }
+#pad.dragging.grace { border-style: dashed; }
+#pad.dragging.grace .pad-drag { opacity: 0.5; }
+#pad.flash:not(.dragging) .pad-flash { opacity: 1; }
 
 .laser-btn {
   display: flex;
