@@ -47,7 +47,7 @@ KEYS = {"next": Key.right, "prev": Key.left, "enter": Key.enter, "backspace": Ke
 # Tour mode (3D walkthroughs such as Matterport): WASD walks, IJKL turns the camera.
 HOLD_KEYS = frozenset("wasdijkl")
 HOLD_TIMEOUT = 1.0  # the phone re-sends held keys ~8x/s; silence means it is gone
-AGENT_VERSION = 4  # 2: held keys; 3: laser on the monitor under the cursor; 4: app switcher gesture
+AGENT_VERSION = 5  # 2: held keys; 3: laser on the monitor under the cursor; 4: app switcher gesture; 5: drag (held mouse button)
 # App switcher (3-finger swipe): Alt+Tab on Windows/Linux, Cmd+Tab on macOS. Arrows move the highlight.
 SWITCH_MOD = Key.cmd if SYSTEM == "Darwin" else Key.alt
 SWITCH_ARROWS = {"left": Key.left, "right": Key.right, "up": Key.up, "down": Key.down}
@@ -424,6 +424,7 @@ class Injector:
         self.ui = ui  # runs visual calls on the GUI thread (macOS) or inline
         self.laser_on = False
         self.held: dict[str, float] = {}  # key -> last time the phone confirmed it
+        self.drag_seen: float | None = None  # left button held for a drag: last time the phone confirmed it
         self.switcher_seen: float | None = None  # app switcher open (modifier down) since the phone last confirmed
 
     def switcher(self, action: str) -> None:
@@ -462,9 +463,23 @@ class Injector:
         elif self.held.pop(key, None) is not None:
             self.keyboard.release(key)
 
+    def drag(self, on: bool) -> None:
+        if on:
+            if self.drag_seen is None:
+                self.mouse.press(Button.left)
+            self.drag_seen = time.monotonic()
+        elif self.drag_seen is not None:
+            self.drag_seen = None
+            self.mouse.release(Button.left)
+
     def release_stale(self, max_age: float = HOLD_TIMEOUT) -> None:
-        """Never leave a key stuck down: lets go of keys the phone stopped confirming."""
+        """Never leave a key or the mouse button stuck down: lets go of what the phone stopped confirming."""
         now = time.monotonic()
+        if self.drag_seen is not None and now - self.drag_seen >= max_age:
+            try:
+                self.drag(False)
+            except Exception as e:
+                print(f"  aviso: no se pudo soltar el botón del mouse ({e})")
         if self.switcher_seen is not None and now - self.switcher_seen >= max_age:
             self.close_switcher()
         for key in [k for k, seen in self.held.items() if now - seen >= max_age]:
@@ -506,7 +521,11 @@ class Injector:
                 self._visual(self.visual.move, px, py)
         elif t == "laser":
             self.set_laser(bool(msg.get("on")))
+        elif t == "drag":
+            self.drag(bool(msg.get("on")))
         elif t == "click":
+            if self.drag_seen is not None:
+                self.drag(False)  # a click while dragging would otherwise press an already-held button
             self.mouse.click(Button.right if msg.get("b") == "right" else Button.left)
         elif t == "scroll":
             self.scroll_rest += float(msg["dy"]) / SCROLL_PX_PER_NOTCH
@@ -539,6 +558,10 @@ def selftest(injector: Injector) -> None:
     for i in range(10):
         injector.handle({"t": "lpos", "x": 0.3 + i * 0.04, "y": 0.5})
     injector.handle({"t": "laser", "on": False})
+    injector.handle({"t": "drag", "on": True})
+    injector.handle({"t": "move", "dx": 5, "dy": 0})
+    injector.handle({"t": "drag", "on": False})
+    assert injector.drag_seen is None
     print(f"selftest ok: {injector.visual.name}")
 
 

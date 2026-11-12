@@ -17,6 +17,7 @@ const el = {
   statusText: $('#status-text'),
   counter: $('#counter'),
   pad: $('#pad'),
+  padFlash: $('#pad-flash'),
   laserBtn: $<HTMLButtonElement>('#laser-btn'),
   laserLabel: $('#laser-label'),
   prev: $<HTMLButtonElement>('#prev'),
@@ -178,6 +179,7 @@ const ua = navigator.userAgent;
 const deviceName = /iPhone/.test(ua) ? 'Un iPhone' : /iPad/.test(ua) ? 'Un iPad' : /Android/.test(ua) ? 'Un teléfono Android' : 'Un dispositivo';
 let hostMode: Mode = 'idle';
 let hostTour = false; // the desktop agent is recent enough to hold keys
+let hostDrag = false; // ...and to hold the mouse button
 let hostGestures = false; // the desktop agent knows the app switcher
 
 function setStatus(text: string, tone: 'ok' | 'warn' | 'err'): void {
@@ -204,6 +206,7 @@ function start(newCode: string): void {
 function stop(): void {
   clearTimeout(redialTimer);
   connected = false;
+  endDrag();
   conn?.close();
   conn = null;
   peer?.destroy();
@@ -267,6 +270,7 @@ function dial(): void {
   const lost = () => {
     if (c !== conn) return;
     connected = false;
+    endDrag();
     if (denied) return;
     setStatus('Reconectando…', 'warn');
     scheduleRedial(1200);
@@ -321,6 +325,8 @@ function onHost(msg: HostMsg): void {
       aspect = msg.aspect || aspect;
       hostMode = msg.mode;
       hostTour = msg.tour === true;
+      hostDrag = msg.drag === true;
+      if (dragging && (msg.mode !== 'agent' || !hostDrag)) endDrag();
       hostGestures = msg.gestures === true;
       if (!hostGestures || msg.mode !== 'agent') closeSwitcher();
       renderTourNotice();
@@ -357,6 +363,7 @@ document.addEventListener('visibilitychange', () => {
     tracker.pause();
     releaseTour();
     stopKeyRepeat();
+    endDrag();
   }
 });
 
@@ -385,6 +392,51 @@ const touches = new Map<number, Touch>();
 // three: a 3-finger gesture took over; pointer and scroll stay still until every finger lifts.
 let gesture = { start: 0, maxFingers: 0, travel: 0, three: false };
 const acc = { mx: 0, my: 0, scroll: 0 };
+
+// Drag: one finger held still for DRAG_HOLD_MS presses the left button; moving drags; lifting drops.
+// Lifting starts a short grace period so the finger can be repositioned on a small pad mid-drag;
+// a tap during it drops at once. The phone re-confirms the held button so the agent never leaves it stuck.
+const DRAG_HOLD_MS = 450;
+const DRAG_SLOP_PX = 8; // finger wobble tolerated while waiting for the hold
+const DRAG_GRACE_MS = 500;
+const DRAG_REFRESH_MS = 250; // agent lets go after 1 s without confirmation
+let holdTimer: number | undefined;
+let graceTimer: number | undefined;
+let dragRefresh: number | undefined;
+let dragging = false;
+let regrab = false; // current touch resumed a drag during the grace period
+
+function startDrag(): void {
+  if (!(hostMode === 'agent' && hostDrag)) {
+    if (hostMode === 'agent') flashPad('Actualizá el agente para arrastrar');
+    return;
+  }
+  dragging = true;
+  send({ t: 'drag', on: true });
+  dragRefresh = window.setInterval(() => send({ t: 'drag', on: true }), DRAG_REFRESH_MS);
+  el.pad.classList.add('dragging');
+  haptic(30);
+}
+
+function endDrag(): void {
+  clearTimeout(holdTimer);
+  clearTimeout(graceTimer);
+  if (!dragging) return;
+  dragging = false;
+  clearInterval(dragRefresh);
+  flushMove(); // the drop lands where the finger left the cursor
+  send({ t: 'drag', on: false });
+  el.pad.classList.remove('dragging', 'grace');
+  haptic(12);
+}
+
+let flashTimer: number | undefined;
+function flashPad(text: string): void {
+  el.padFlash.textContent = text;
+  el.pad.classList.add('flash');
+  clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => el.pad.classList.remove('flash'), 1800);
+}
 
 // ---- 3-finger swipe: app switcher, as on a Windows touchpad.
 // Moving opens it (Alt+Tab), every further STEP px moves the highlight, lifting picks the app.
@@ -437,7 +489,18 @@ function trackSwipe(dx: number, dy: number): void {
 el.pad.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   capture(el.pad, e.pointerId);
-  if (touches.size === 0) gesture = { start: performance.now(), maxFingers: 0, travel: 0, three: false };
+  if (touches.size === 0) {
+    gesture = { start: performance.now(), maxFingers: 0, travel: 0, three: false };
+    regrab = dragging;
+    if (dragging) {
+      clearTimeout(graceTimer);
+      el.pad.classList.remove('grace');
+    } else {
+      holdTimer = window.setTimeout(startDrag, DRAG_HOLD_MS);
+    }
+  } else {
+    clearTimeout(holdTimer); // a second finger means scroll or right click, not a drag
+  }
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() });
   gesture.maxFingers = Math.max(gesture.maxFingers, touches.size);
   if (touches.size >= 3 && !gesture.three) {
@@ -458,6 +521,7 @@ el.pad.addEventListener('pointermove', (e) => {
   const dt = Math.max(now - prev.t, 1);
   touches.set(e.pointerId, { x: e.clientX, y: e.clientY, t: now });
   gesture.travel += Math.hypot(dx, dy);
+  if (gesture.travel > DRAG_SLOP_PX) clearTimeout(holdTimer);
 
   if (gesture.three) {
     if (touches.size >= 3) trackSwipe(dx / touches.size, dy / touches.size); // each finger reports; average
@@ -476,9 +540,20 @@ function endTouch(e: PointerEvent): void {
   if (!touches.delete(e.pointerId)) return;
   if (touches.size < 3) closeSwitcher(); // the first finger to lift picks the app, like Windows
   if (touches.size > 0) return;
+  clearTimeout(holdTimer);
   el.pad.classList.remove('active');
   const duration = performance.now() - gesture.start;
-  if (gesture.travel < 10 && duration < 280) {
+  const tap = gesture.travel < 10 && duration < 280;
+  if (dragging) {
+    if (regrab && tap) {
+      endDrag(); // tap during the grace period: drop now
+    } else {
+      el.pad.classList.add('grace');
+      graceTimer = window.setTimeout(endDrag, DRAG_GRACE_MS);
+    }
+    return;
+  }
+  if (tap) {
     send({ t: 'click', b: gesture.maxFingers >= 2 ? 'right' : 'left' });
     haptic(10);
     el.pad.classList.add('tap');
@@ -571,15 +646,19 @@ el.laserBtn.addEventListener('click', askMotionPermission);
 // ---------------------------------------------------------------- send loop (one batch per frame)
 
 let lastFlush = performance.now();
+function flushMove(): void {
+  if (!connected) return;
+  const mx = Math.trunc(acc.mx), my = Math.trunc(acc.my);
+  if (mx || my) {
+    send({ t: 'move', dx: mx, dy: my });
+    acc.mx -= mx;
+    acc.my -= my;
+  }
+}
 function flush(): void {
   const now = performance.now();
   if (connected) {
-    const mx = Math.trunc(acc.mx), my = Math.trunc(acc.my);
-    if (mx || my) {
-      send({ t: 'move', dx: mx, dy: my });
-      acc.mx -= mx;
-      acc.my -= my;
-    }
+    flushMove();
     if (zoomRate) {
       // Wheel up zooms in. Full deflection = 10 wheel notches per second (40 px each).
       acc.scroll -= zoomRate * Math.abs(zoomRate) * 400 * Math.min((now - lastFlush) / 1000, 0.05);
@@ -968,6 +1047,7 @@ function setUiMode(mode: UiMode): void {
   el.modeTour.setAttribute('aria-selected', String(mode === 'tour'));
   if (laserOn) setLaser(false);
   releaseTour();
+  endDrag();
 }
 el.modeClicker.addEventListener('click', () => setUiMode('clicker'));
 el.modeTour.addEventListener('click', () => setUiMode('tour'));
