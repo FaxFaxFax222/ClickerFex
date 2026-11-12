@@ -1,9 +1,9 @@
 import './remote.css';
 import Peer, { type DataConnection } from 'peerjs';
-import type { HoldKey, HostMsg, Key, Mode, RemoteMsg } from '../shared/protocol';
+import type { HoldKey, HostMsg, Key, Mode, MotionMsg, RemoteMsg } from '../shared/protocol';
 import { AimTracker, OneEuro, motionPermissionPending, requestMotionPermission, type Aim } from './aim';
 import { isHex, keyId, pairingNumber, proof, randomHex, sha256Hex } from '../shared/auth';
-import { keepAwake, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
+import { keepAwake, motionChannel, normalizeCode, peerId, peerOptions, store } from '../shared/peer';
 
 const $ = <T extends Element = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -188,6 +188,42 @@ function send(msg: RemoteMsg): void {
   if (connected && conn?.open) conn.send(msg);
 }
 
+// Pointer motion goes on its own channel, which never waits for a lost packet (see motionChannel).
+let motion: RTCDataChannel | null = null;
+let hostFast = false; // the computer said it listens there (an older page left open does not)
+function sendMotion(msg: MotionMsg): void {
+  if (hostFast && connected && motion?.readyState === 'open') motion.send(JSON.stringify(msg));
+  else send(msg);
+}
+
+// Delay of the whole trip to the computer and back, and whether the link is direct or through a relay server.
+let rtt = -1;
+let relayed = false;
+const pingSent = new Map<number, number>();
+function renderLink(): void {
+  if (!admitted) return;
+  const parts = [hostMode === 'idle' ? 'Conectado · elegí un modo en la PC' : 'Conectado'];
+  if (relayed) parts.push('vía servidor externo');
+  if (rtt >= 0) parts.push(`${Math.round(rtt)} ms`);
+  setStatus(parts.join(' · '), relayed || rtt > 120 ? 'warn' : 'ok');
+}
+async function checkRoute(c: DataConnection): Promise<void> {
+  try {
+    const stats = await c.peerConnection.getStats();
+    let pairId = '';
+    stats.forEach((s) => {
+      if (s.type === 'transport' && s.selectedCandidatePairId) pairId = s.selectedCandidatePairId as string;
+    });
+    const pair = pairId ? (stats.get(pairId) as { localCandidateId?: string; remoteCandidateId?: string } | undefined) : undefined;
+    const kind = (id?: string) => (id ? (stats.get(id) as { candidateType?: string } | undefined)?.candidateType : undefined);
+    if (c !== conn || !pair) return;
+    relayed = kind(pair.localCandidateId) === 'relay' || kind(pair.remoteCandidateId) === 'relay';
+    renderLink();
+  } catch {
+    /* stats unavailable: nothing to show */
+  }
+}
+
 function start(newCode: string): void {
   code = newCode;
   denied = false;
@@ -251,6 +287,11 @@ function dial(): void {
     connected = true;
     admitted = false;
     lastPong = Date.now();
+    hostFast = false;
+    rtt = -1;
+    relayed = false;
+    pingSent.clear();
+    motion = motionChannel(c);
     setStatus('Vinculando…', 'warn');
     enrolling = null;
     pairNumber = '';
@@ -281,9 +322,16 @@ function scheduleRedial(ms: number): void {
 
 function onHost(msg: HostMsg): void {
   switch (msg.t) {
-    case 'pong':
+    case 'pong': {
       lastPong = Date.now();
+      const sent = pingSent.get(msg.id);
+      pingSent.clear();
+      if (sent !== undefined) {
+        rtt = performance.now() - sent;
+        renderLink();
+      }
       break;
+    }
     case 'challenge':
       if (conn) void onChallenge(conn, msg.host, msg.nonce);
       break;
@@ -316,16 +364,18 @@ function onHost(msg: HostMsg): void {
         admitted = true;
         rememberHost();
         haptic(30);
+        if (conn) void checkRoute(conn);
       }
       aspect = msg.aspect || aspect;
       hostMode = msg.mode;
       hostTour = msg.tour === true;
+      hostFast = msg.fast === true;
       renderTourNotice();
       el.counter.textContent = msg.mode === 'pdf' ? `${msg.page} / ${msg.total}` : '';
       // Typing/dictation needs the desktop agent: only offered in system mode.
       el.kbdBtn.hidden = msg.mode !== 'agent';
       if (msg.mode !== 'agent' && el.kbd.open) closeKeyboard();
-      setStatus(msg.mode === 'idle' ? 'Conectado · elegí un modo en la PC' : 'Conectado', 'ok');
+      renderLink();
       break;
   }
 }
@@ -333,7 +383,8 @@ function onHost(msg: HostMsg): void {
 // Heartbeat: data channels can stay "open" long after the laptop disappears.
 window.setInterval(() => {
   if (!connected) return;
-  send({ t: 'ping', id: ++pingId });
+  pingSent.set(++pingId, performance.now());
+  send({ t: 'ping', id: pingId });
   if (Date.now() - lastPong > 6000 && !denied) {
     connected = false;
     setStatus('Reconectando…', 'warn');
@@ -506,13 +557,14 @@ el.laserBtn.addEventListener('click', askMotionPermission);
 
 // ---------------------------------------------------------------- send loop (one batch per frame)
 
+let lposSeq = 0;
 let lastFlush = performance.now();
 function flush(): void {
   const now = performance.now();
   if (connected) {
     const mx = Math.trunc(acc.mx), my = Math.trunc(acc.my);
     if (mx || my) {
-      send({ t: 'move', dx: mx, dy: my });
+      sendMotion({ t: 'move', dx: mx, dy: my });
       acc.mx -= mx;
       acc.my -= my;
     }
@@ -522,11 +574,11 @@ function flush(): void {
     }
     const sc = Math.trunc(acc.scroll);
     if (sc) {
-      send({ t: 'scroll', dy: sc });
+      sendMotion({ t: 'scroll', dy: sc });
       acc.scroll -= sc;
     }
     if (laserOn && pending) {
-      send({ t: 'lpos', x: +pending.x.toFixed(4), y: +pending.y.toFixed(4) });
+      sendMotion({ t: 'lpos', x: +pending.x.toFixed(4), y: +pending.y.toFixed(4), n: ++lposSeq });
       pending = null;
     }
   } else {
