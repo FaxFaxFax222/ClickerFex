@@ -211,6 +211,7 @@ function stateMsg(): HostMsg {
     aspect: window.innerWidth / window.innerHeight,
     tour: agent.version >= 2,
     fast: true,
+    gestures: agent.version >= 4,
   };
 }
 
@@ -466,6 +467,7 @@ function route(msg: Exclude<RemoteMsg, { t: 'hello' | 'ping' | 'prove' | 'enrol'
       break;
     case 'text':
     case 'hold':
+    case 'switcher':
       if (toAgent) agent.send(msg);
       break;
     case 'move':

@@ -46,7 +46,10 @@ KEYS = {"next": Key.right, "prev": Key.left, "enter": Key.enter, "backspace": Ke
 # Tour mode (3D walkthroughs such as Matterport): WASD walks, IJKL turns the camera.
 HOLD_KEYS = frozenset("wasdijkl")
 HOLD_TIMEOUT = 1.0  # the phone re-sends held keys ~8x/s; silence means it is gone
-AGENT_VERSION = 3  # 2: held keys; 3: laser on the monitor under the cursor
+AGENT_VERSION = 4  # 2: held keys; 3: laser on the monitor under the cursor; 4: app switcher gesture
+# App switcher (3-finger swipe): Alt+Tab on Windows/Linux, Cmd+Tab on macOS. Arrows move the highlight.
+SWITCH_MOD = Key.cmd if SYSTEM == "Darwin" else Key.alt
+SWITCH_ARROWS = {"left": Key.left, "right": Key.right, "up": Key.up, "down": Key.down}
 SCROLL_PX_PER_NOTCH = 40
 MAX_TEXT = 4000
 
@@ -420,6 +423,33 @@ class Injector:
         self.ui = ui  # runs visual calls on the GUI thread (macOS) or inline
         self.laser_on = False
         self.held: dict[str, float] = {}  # key -> last time the phone confirmed it
+        self.switcher_seen: float | None = None  # app switcher open (modifier down) since the phone last confirmed
+
+    def switcher(self, action: str) -> None:
+        if action == "open":
+            if self.switcher_seen is None:
+                self.keyboard.press(SWITCH_MOD)
+            self.switcher_seen = time.monotonic()
+            self.keyboard.tap(Key.tab)
+        elif self.switcher_seen is None:
+            return  # arrows without the modifier would move the caret in the focused app
+        elif action == "keep":
+            self.switcher_seen = time.monotonic()
+        elif action in SWITCH_ARROWS:
+            self.switcher_seen = time.monotonic()
+            self.keyboard.tap(SWITCH_ARROWS[action])
+        elif action == "close":
+            self.close_switcher()
+
+    def close_switcher(self) -> None:
+        """Lets go of the modifier: the OS switches to the highlighted app."""
+        if self.switcher_seen is None:
+            return
+        self.switcher_seen = None
+        try:
+            self.keyboard.release(SWITCH_MOD)
+        except Exception as e:
+            print(f"  aviso: no se pudo soltar {SWITCH_MOD} ({e})")
 
     def hold(self, key: str, on: bool) -> None:
         if key not in HOLD_KEYS:
@@ -434,6 +464,8 @@ class Injector:
     def release_stale(self, max_age: float = HOLD_TIMEOUT) -> None:
         """Never leave a key stuck down: lets go of keys the phone stopped confirming."""
         now = time.monotonic()
+        if self.switcher_seen is not None and now - self.switcher_seen >= max_age:
+            self.close_switcher()
         for key in [k for k, seen in self.held.items() if now - seen >= max_age]:
             del self.held[key]
             try:
@@ -487,6 +519,8 @@ class Injector:
                 self.keyboard.tap(key)
         elif t == "hold":
             self.hold(str(msg.get("k")), bool(msg.get("on")))
+        elif t == "switcher":
+            self.switcher(str(msg.get("a")))
         elif t == "text":
             text = str(msg.get("s", ""))[:MAX_TEXT]
             if text:

@@ -16,6 +16,7 @@ Tu teléfono como clicker de presentaciones: touchpad, avanzar/retroceder y lás
 ### Controles en el teléfono
 
 - **Touchpad**: deslizar mueve el puntero (con aceleración), tocar = clic, tocar con dos dedos = clic derecho, arrastrar con dos dedos = scroll.
+- **Cambiar de app (3 dedos, modo sistema)**: deslizar con tres dedos abre el selector de ventanas (Alt+Tab en Windows, Cmd+Tab en macOS); seguir deslizando mueve la selección (cada ~70 px, también arriba/abajo en Windows); levantar los dedos cambia a esa app. Requiere agente v4.
 - **‹ / ›**: diapositiva anterior / siguiente.
 - **Láser**: apuntá con la parte de arriba del teléfono (donde está la cámara selfie) hacia el centro de la pantalla y mantené apretado el botón. El punto aparece en el centro y sigue hacia dónde apuntás, como un láser real. Usa orientación absoluta: girar el teléfono sobre su eje largo no lo mueve, y la misma dirección siempre cae en el mismo lugar.
   - Ajuste clave (`⋯` → *Ancho de la pantalla vista desde vos*): cuántos grados ocupa la pantalla desde donde estás parado. Default 30° (≈3 m de pantalla a 5–6 m). Lejos o pantalla chica: bajalo. Cerca o pantalla gigante: subilo.
