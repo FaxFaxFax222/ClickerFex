@@ -16,6 +16,7 @@ Tu teléfono como clicker de presentaciones: touchpad, avanzar/retroceder y lás
 ### Controles en el teléfono
 
 - **Touchpad**: deslizar mueve el puntero (con aceleración), tocar = clic, tocar con dos dedos = clic derecho, arrastrar con dos dedos = scroll.
+- **Arrastrar** (modo sistema, agente v4+): apoyá el dedo quieto ~0,5 s hasta que vibre y el touchpad diga *Arrastrando*; mové para arrastrar (ventanas, archivos, seleccionar texto, sliders). Al levantar el dedo hay medio segundo para volver a apoyarlo y seguir arrastrando (útil porque el touchpad es chico); si no, suelta. Un toque durante ese medio segundo suelta al instante. Si el dedo se mueve antes del medio segundo es un movimiento normal.
 - **‹ / ›**: diapositiva anterior / siguiente.
 - **Láser**: apuntá con la parte de arriba del teléfono (donde está la cámara selfie) hacia el centro de la pantalla y mantené apretado el botón. El punto aparece en el centro y sigue hacia dónde apuntás, como un láser real. Usa orientación absoluta: girar el teléfono sobre su eje largo no lo mueve, y la misma dirección siempre cae en el mismo lugar.
   - Ajuste clave (`⋯` → *Ancho de la pantalla vista desde vos*): cuántos grados ocupa la pantalla desde donde estás parado. Default 30° (≈3 m de pantalla a 5–6 m). Lejos o pantalla chica: bajalo. Cerca o pantalla gigante: subilo.

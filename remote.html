@@ -39,7 +39,9 @@
 
       <div id="clicker" class="view">
         <div id="pad" role="application" aria-label="Touchpad">
-          <span class="pad-hint">Deslizá para mover · tocá para clic<br />dos dedos: desplazar · tocar con dos: clic derecho</span>
+          <span class="pad-hint">Deslizá para mover · tocá para clic<br />mantené quieto y mové: arrastrar<br />dos dedos: desplazar · tocar con dos: clic derecho</span>
+          <span class="pad-drag" aria-live="polite">Arrastrando</span>
+          <span class="pad-flash" id="pad-flash" aria-live="polite"></span>
         </div>
 
         <button type="button" id="laser-btn" class="laser-btn">
